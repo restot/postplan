@@ -1,0 +1,1 @@
+{"name":"homelab-postplan","private":true,"type":"module","scripts":{"patch":"node patch.mjs","test":"node --test test/*.test.mjs","start":"node node_modules/postplan/src/server.js"},"dependencies":{"postplan":"0.0.4"}}

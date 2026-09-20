@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { test, before, after, afterEach, mock } from 'node:test';
+process.env.DATABASE_URL = 'postgres://test:test@127.0.0.1/test';
+process.env.AWS_ENDPOINT_URL = 'http://127.0.0.1:9000';
+process.env.AWS_ACCESS_KEY_ID = 'test';
+process.env.AWS_SECRET_ACCESS_KEY = 'test';
+process.env.AWS_S3_BUCKET_NAME = 'test';
+const { createApp } = await import('../node_modules/postplan/src/api.js');
+const { pool } = await import('../node_modules/postplan/src/db.js');
+const { S3Client } = await import('@aws-sdk/client-s3');
+let server, base;
+before(async () => {
+  server = createApp().listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  base = `http://127.0.0.1:${server.address().port}`;
+});
+afterEach(() => mock.restoreAll());
+after(async () => { await new Promise(resolve => server.close(resolve)); await pool.end(); });
+
+test('rejects anonymous uploads before parsing large bodies', async () => {
+  const res = await fetch(`${base}/api/uploads`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({html: 'x'.repeat(3*1024*1024)}) });
+  assert.equal(res.status, 401);
+});
+
+test('authenticated requests exceed the former JSON limit', async () => {
+  mock.method(pool, 'query', async () => ({rows:[{id:'test-key',account_id:'test'}],rowCount:1}));
+  const res = await fetch(`${base}/api/uploads`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer test'}, body:JSON.stringify({html:'',padding:'x'.repeat(3*1024*1024)}) });
+  assert.equal(res.status, 422);
+  assert.match(JSON.stringify(await res.json()), /empty/);
+});
+
+test('canonical links provide preview metadata and sandboxed JavaScript, raw stays exact', async () => {
+  const html = '<!doctype html><html><head><title>Preview &amp; test</title></head><body><script>document.body.dataset.ready="yes"</script></body></html>';
+  mock.method(pool, 'query', async sql => ({ rows: sql.includes('FROM drafts') ? [{id:'abcdefghijkl',current_version_id:'v1',title:'Preview & test',description:'A "shared" report'}] : [{version_number:1,object_key:'test'}] }));
+  mock.method(S3Client.prototype, 'send', async () => ({Body: (async function*(){yield Buffer.from(html);})()}));
+  const res = await fetch(`${base}/d/abcdefghijkl`, {headers:{'User-Agent':'Slackbot-LinkExpanding 1.0'}});
+  assert.equal(res.status,200);
+  const csp = res.headers.get('content-security-policy');
+  assert.match(csp,/sandbox allow-scripts/);
+  assert.doesNotMatch(csp,/allow-same-origin/);
+  assert.match(csp,/script-src 'unsafe-inline' https:/);
+  const body = await res.text();
+  assert.match(body,/property="og:title" content="Preview &amp; test"/);
+  assert.match(body,/property="og:description" content="A &quot;shared&quot; report"/);
+  assert.match(body,/<script>document.body.dataset.ready="yes"<\/script>/);
+  assert.equal(await (await fetch(`${base}/d/abcdefghijkl/raw`)).text(),html);
+});
