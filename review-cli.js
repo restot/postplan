@@ -1,4 +1,15 @@
-export function registerReviewCommands(program,readAuth) {
+export function registerReviewCommands(program,readAuth,forgetDraft) {
+  program.command('destroy <draft-id>').description('Unpublish your draft and all its version links')
+    .option('-y, --yes','Confirm unpublishing this draft')
+    .action(async(draftId,options)=>{
+      if(!options.yes) throw new Error('This unpublishes the draft. Repeat with --yes to confirm.');
+      const {apiUrl,apiKey}=readAuth();
+      const response=await fetch(`${apiUrl.replace(/\/$/,'')}/api/drafts/${encodeURIComponent(draftId)}`,{method:'DELETE',headers:{Authorization:`Bearer ${apiKey}`}});
+      if(!response.ok) throw new Error(`Destroy failed (${response.status}). Local mappings were not changed.`);
+      try {forgetDraft(draftId);}
+      catch(error) {throw new Error(`Draft unpublished, but local mapping cleanup failed: ${error.message}`);}
+      console.log(`Unpublished draft ${draftId}. Stored history is retained by the server.`);
+    });
   program.command('comments <draft-id>').description('Read anchored review comments on your draft')
     .option('--json','Output JSON for an agent')
     .action(async(draftId,options)=>{

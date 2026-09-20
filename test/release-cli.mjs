@@ -20,6 +20,7 @@ try {
   const cli=`${dir}/install/bin/postplan`;
   assert.equal(execFileSync(cli,['--version'],{env,encoding:'utf8'}).trim(),version);
   assert.match(execFileSync(cli,['comments','--help'],{env,encoding:'utf8'}),/--json/);
+  assert.match(execFileSync(cli,['destroy','--help'],{env,encoding:'utf8'}),/--yes/);
   const installed=`${dir}/install/lib/node_modules/@restot/postplan`;
   const manifest=JSON.parse(readFileSync(`${installed}/package.json`));
   assert.equal(manifest.license,'MIT');assert.equal(manifest.scripts,undefined);

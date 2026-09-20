@@ -18,11 +18,16 @@ try {
   await pool.query('INSERT INTO drafts(id,account_id,title) VALUES($1,$2,$3)',[draft,owner,'Fixture']);
   const versionId=randomUUID();
   await pool.query('INSERT INTO draft_versions(id,draft_id,version_number,object_key,content_hash,file_size,created_by_api_key_id) VALUES($1,$2,1,$3,$4,1,$5)',[versionId,draft,'fixture','hash',key]);
+  await pool.query('UPDATE drafts SET current_version_id=$1 WHERE id=$2',[versionId,draft]);
   async function start() {
     server=createApp().listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
     config.publicBaseUrl=`http://127.0.0.1:${server.address().port}`;return config.publicBaseUrl;
   }
   let base=await start();
+  const versions=await fetch(`${base}/review-api/drafts/${draft}/versions`);
+  assert.equal(versions.status,200);
+  const rows=await versions.json();assert.equal(rows.length,1);assert.equal(rows[0].version,1);assert.equal(rows[0].current,true);
+  assert.deepEqual(Object.keys(rows[0]).sort(),['created_at','current','version']);
   const cookie=createSessionCookie({accountId:friend,accountName:'Friend'}).split(';')[0];
   const body={body:'Please change this',version:1,anchor:{type:'text',quote:'Hello',selector:'h1',prefix:'',suffix:' world'}};
   const post=(data=body)=>fetch(`${base}/review-api/drafts/${draft}/comments`,{method:'POST',headers:{cookie,origin:base,'content-type':'application/json'},body:JSON.stringify(data)});
@@ -34,6 +39,7 @@ try {
   assert.equal(list.status,200);assert.deepEqual((await list.json())[0],comment);
   await pool.query('UPDATE drafts SET disabled_at=now() WHERE id=$1',[draft]);
   assert.equal((await post()).status,404);
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/versions`)).status,404);
   assert.equal((await fetch(`${base}/review-api/drafts/${draft}/comments`,{headers:{cookie}})).status,404);
   console.log('PASS: PostgreSQL schema idempotency, version binding, author persistence across app restart, disabled-draft denial');
 } finally {if(server)await new Promise(r=>server.close(r));await pool.end();}

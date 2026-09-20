@@ -27,6 +27,17 @@ function validAnchor(anchor) {
 }
 
 export function registerReviewRoutes(app) {
+  // Draft versions are public. Exclude owner-only metadata from this list.
+  app.get('/review-api/drafts/:draftId/versions',async(req,res,next)=>{
+    try {
+      const result=await pool.query(`SELECT v.version_number AS version,v.created_at,v.id=d.current_version_id AS current
+        FROM draft_versions v JOIN drafts d ON d.id=v.draft_id
+        WHERE d.id=$1 AND d.deleted_at IS NULL AND d.disabled_at IS NULL
+        ORDER BY v.version_number DESC`,[req.params.draftId]);
+      if(!result.rows.length) return res.status(404).json({error:'Draft not found'});
+      res.json(result.rows);
+    } catch(error) { next(error); }
+  });
   const signedIn=(req,res,next)=>{
     req.reviewer=readSession(req);
     if(!req.reviewer) return res.status(401).json({error:'Sign in to read or add comments'});

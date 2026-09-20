@@ -13,6 +13,19 @@ before(async()=>{server=createApp().listen(0,'127.0.0.1');await new Promise(r=>s
 afterEach(()=>mock.restoreAll());
 after(async()=>{await new Promise(r=>server.close(r));await pool.end();});
 const post=(body=payload,headers={})=>fetch(base+'/review-api/drafts/abcdefghijkl/comments',{method:'POST',headers:{cookie,origin:'https://postplan.test','content-type':'application/json',...headers},body:JSON.stringify(body)});
+test('public version list exposes only version dates and latest flag; unavailable drafts return 404',async()=>{
+  const versions=[{version:2,created_at:'2026-09-20T00:00:00Z',current:true},{version:1,created_at:'2026-09-19T00:00:00Z',current:false}];
+  mock.method(pool,'query',async(sql,args)=>{
+    assert.match(sql,/deleted_at IS NULL/);assert.match(sql,/disabled_at IS NULL/);
+    assert.match(sql,/ORDER BY v.version_number DESC/);
+    assert.doesNotMatch(sql,/SELECT \*|object_key|git_commit|author|email/);
+    assert.deepEqual(args,['abcdefghijkl']);return {rows:versions};
+  });
+  const res=await fetch(base+'/review-api/drafts/abcdefghijkl/versions');
+  assert.equal(res.status,200);assert.deepEqual(await res.json(),versions);
+  mock.restoreAll();mock.method(pool,'query',async()=>({rows:[]}));
+  assert.equal((await fetch(base+'/review-api/drafts/abcdefghijkl/versions')).status,404);
+});
 test('session status returns authenticated name without email',async()=>{
   const res=await fetch(base+'/review-api/session',{headers:{cookie}});
   assert.equal(res.status,200);assert.deepEqual(await res.json(),{name:'Friend'});

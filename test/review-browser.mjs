@@ -17,6 +17,7 @@ const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 const comments=[];
 const html='<title>Review fixture</title><body><h1>Hello world</h1><p>Nearby context</p><script>window.untrusted=true</script></body>';
 mock.method(pool,'query',async(sql,args)=>{
+  if(sql.includes('AS current')) return {rows:[{version:2,created_at:'2026-09-20T00:00:00Z',current:true},{version:1,created_at:'2026-09-19T00:00:00Z',current:false}]};
   if(sql.includes('api_keys')) return {rows:[{id:'key',account_id:'owner'}]};
   if(sql.includes('INSERT INTO review_comments')) {
     const c={id:args[6],author_id:args[2],author_name:args[3],body:args[4],anchor:JSON.parse(args[5]),version:args[1],created_at:new Date().toISOString()};
@@ -24,7 +25,7 @@ mock.method(pool,'query',async(sql,args)=>{
   }
   if(sql.includes('FROM review_comments')) return {rows:comments.slice(args[1],args[1]+100)};
   if(sql.includes('FROM drafts')) return {rows:[{id:args[0],current_version_id:'v1',title:'Review fixture'}]};
-  return {rows:[{id:'v1',version_number:1,object_key:'test'}]};
+  return {rows:[{id:'v1',version_number:args?.[1]||1,object_key:'test'}]};
 });
 mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield Buffer.from(html);})()}));
 const server=createApp().listen(0,'127.0.0.1');
@@ -78,11 +79,29 @@ try {
     const {stdout}=await promisify(execFile)(process.execPath,['node_modules/postplan/bin/postplan.js','comments','abcdefghijkl','--json'],{cwd:new URL('..',import.meta.url),env:{...process.env,POSTPLAN_API_URL:base,POSTPLAN_API_KEY:'test'}});
     assert.equal(JSON.parse(stdout)[0].author_id,'friend');assert.equal(JSON.parse(stdout).length,2);
     assert.deepEqual(errors,[]);
+    await page.waitForFunction(()=>document.querySelectorAll('#review-version option').length===2);
+    assert.equal(await page.locator('#review-version').inputValue(),'1');
+    assert.match(await page.locator('#review-version option[value="2"]').textContent(),/latest/);
+    await page.locator('#review-body').fill('Unposted feedback');
+    page.once('dialog',dialog=>dialog.dismiss());
+    await page.locator('#review-version').selectOption('2');
+    assert.equal(await page.locator('#review-version').inputValue(),'1');
+    assert.equal(await page.locator('#review-body').inputValue(),'Unposted feedback');
+    await page.locator('#review-body').fill('');
+    await page.locator('#review-version').selectOption('2');
+    await page.waitForURL('**/d/abcdefghijkl/v/2?review=1');
+    await page.waitForFunction(()=>!document.querySelector('#review-panel').hidden && document.querySelector('#review-version').value==='2');
+    frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
+    assert.match(frame.url(),/\/v\/2\?postplan-frame=1/);
     await context.clearCookies();
     await page.locator('#review-refresh').click();
     await page.waitForFunction(()=>document.querySelector('#review-identity').textContent==='Not signed in');
     assert.equal(await page.locator('#review-sign-in').isVisible(),true);
     assert.equal(await page.locator('#review-submit').isDisabled(),true);
+    assert.equal(await page.locator('#review-version').isEnabled(),true);
+    await page.locator('#review-version').selectOption('1');
+    await page.waitForURL('**/d/abcdefghijkl/v/1?review=1');
+    await page.waitForFunction(()=>document.querySelector('#review-version').value==='1');
     await context.close();
   }
   console.log('PASS: desktop/mobile text and element comments, author attribution, reload, locate, XSS isolation, CLI JSON');

@@ -6,7 +6,7 @@ This build patches the MIT-licensed `postplan@0.0.4` npm package by t3dotgg. It 
 
 ## Install the CLI
 
-You need Node.js 22 or newer and npm. Download `restot-postplan-0.1.0.tgz` and `SHA256SUMS` from this repository's Releases page.
+You need Node.js 22 or newer and npm. Download `restot-postplan-0.1.1.tgz` and `SHA256SUMS` from this repository's Releases page.
 
 Check the download, then install it:
 
@@ -15,7 +15,7 @@ Check the download, then install it:
 shasum -a 256 -c SHA256SUMS
 # Linux: sha256sum -c SHA256SUMS
 
-npm install --global --offline --ignore-scripts ./restot-postplan-0.1.0.tgz
+npm install --global --offline --ignore-scripts ./restot-postplan-0.1.1.tgz
 postplan --version
 ```
 
@@ -39,6 +39,8 @@ The packaged CLI defaults to `https://postplan.restot.top`. Use `--api-url` when
 | --- | --- |
 | Publish HTML | Upload a local file and get a public link. Repeat the upload to update the same draft. |
 | Keep versions | Each update creates a version. Open `/d/<id>/v/<number>` to read an older one. |
+| Switch versions | The Comments menu lists every version with its publication date and a latest-version label. No sign-in required. |
+| Unpublish a draft | `postplan destroy <id> --yes` hides the draft and all its version links. |
 | Run interactive pages | Inline scripts, modules, HTTPS scripts, event handlers, stylesheets and fonts are allowed inside the sandbox. |
 | Download from a page | Sandboxed downloads work, including client-generated JSON exports. |
 | Save picks on one device | A Promise-based storage API saves up to 1 MiB per draft in the viewer's browser. |
@@ -64,16 +66,21 @@ postplan list
 postplan list --json
 postplan comments <id>
 postplan comments <id> --json
+postplan destroy <id> --yes
 postplan --help
 ```
 
 The CLI stores credentials, configuration and local-file-to-draft mappings in `~/.postplan`. Credentials and mappings use mode `0600` on systems that support Unix permissions. Set `POSTPLAN_CONFIG_DIR` to keep another deployment in a separate profile. `POSTPLAN_API_URL` and `POSTPLAN_API_KEY` provide environment overrides.
+
+`destroy` requires `--yes` and the draft owner's API key. It soft-deletes the draft and removes matching local file mappings after the server confirms success. Stored history remains on the server. It is not a permanent data-erasure command.
 
 Uploads include the filename and file hash. When available, they also include Git repository, branch, commit subject, commit hash, dirty state and CI metadata. Inspect your HTML before uploading. The service publishes what you give it.
 
 ## Review comments
 
 Open **Comments** on a draft. The panel shows **Signed in as [name]** or **Not signed in**. Posting stays disabled while signed out or checking the session. If you sign in in the new tab, return to the draft and press **Refresh**.
+
+Use the **Version** picker in that menu to open any published version. It shows the viewed version, publication dates and which version is latest. The menu stays open after switching. If you have an unposted comment, switching asks before discarding it. The version list works while signed out and contains no private Git or account metadata.
 
 Select text, or press **Pick element** and tap part of the page. The selected element gets an orange outline. It stays until you choose another anchor or post the comment. Its previous outline is restored afterward.
 
@@ -95,6 +102,7 @@ Comments never rewrite uploaded HTML or local files. The agent reads feedback, e
 | Endpoint | Authentication |
 | --- | --- |
 | `GET /review-api/session` | Signed browser session. Returns the display name. |
+| `GET /review-api/drafts/:draftId/versions` | Public. Returns `version`, `created_at` and `current`, newest first. |
 | `GET /review-api/drafts/:draftId/comments` | Signed browser session. |
 | `POST /review-api/drafts/:draftId/comments` | Signed browser session and same-origin JSON. |
 | `GET /api/drafts/:draftId/comments` | Draft owner's bearer key. |
@@ -139,7 +147,7 @@ The server needs PostgreSQL and an S3-compatible bucket. This repository contain
 npm ci --ignore-scripts
 npm run patch
 npm test
-docker build -t postplan:0.1.0 .
+docker build -t postplan:0.1.1 .
 ```
 
 Run the patch once after each clean install. It fails if the expected upstream source has changed. Edit `patch.mjs` and the root JavaScript modules, not generated files under `node_modules`.

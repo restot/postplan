@@ -22,7 +22,14 @@ patch('src/ids.js', [
 ]);
 patch('src/public-url.js', [['/^[a-z0-9]{12}$/', '/^(?:[a-z0-9]{12}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/']]);
 patch('src/server.js', [['import { createApp }', 'import { initReviewDb } from "./review.js";\nimport { createApp }'], ['await initDb();', 'await initDb();\n  await initReviewDb();']]);
-patch('bin/postplan.js', [['program.exitOverride();', 'registerReviewCommands(program, readAuth);\nprogram.exitOverride();']]);
+patch('bin/postplan.js', [['program.exitOverride();', `registerReviewCommands(program, readAuth, (draftId) => {
+  const drafts = readDrafts();
+  for (const [file, draft] of Object.entries(drafts.files || {})) {
+    if (draft.draftId === draftId) delete drafts.files[file];
+  }
+  writeJson(DRAFTS_PATH, drafts, 0o600);
+});
+program.exitOverride();`]]);
 // Keep the executable shebang first.
 patch('bin/postplan.js', [['#!/usr/bin/env node', '#!/usr/bin/env node\nimport { registerReviewCommands } from "../src/review-cli.js";']]);
 patch('bin/postplan.js', [['const POSTPLAN_DIR = path.join(os.homedir(), ".postplan");', 'const POSTPLAN_DIR = process.env.POSTPLAN_CONFIG_DIR || path.join(os.homedir(), ".postplan");']]);
