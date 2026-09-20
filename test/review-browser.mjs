@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import {mock} from 'node:test';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+process.env.DATABASE_URL='postgres://test:test@127.0.0.1/test';
+process.env.POSTPLAN_SESSION_SECRET='browser-test-only';
+process.env.AWS_ENDPOINT_URL='http://127.0.0.1:9000';
+process.env.AWS_S3_BUCKET_NAME='test';
+process.env.AWS_ACCESS_KEY_ID='test';
+process.env.AWS_SECRET_ACCESS_KEY='test';
+const {createApp}=await import('../node_modules/postplan/src/api.js');
+const {pool}=await import('../node_modules/postplan/src/db.js');
+const {config}=await import('../node_modules/postplan/src/config.js');
+const {createSessionCookie}=await import('../node_modules/postplan/src/web-auth.js');
+const {S3Client}=await import('@aws-sdk/client-s3');
+const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
+const comments=[];
+const html='<title>Review fixture</title><body><h1>Hello world</h1><p>Nearby context</p><script>window.untrusted=true</script></body>';
+mock.method(pool,'query',async(sql,args)=>{
+  if(sql.includes('api_keys')) return {rows:[{id:'key',account_id:'owner'}]};
+  if(sql.includes('INSERT INTO review_comments')) {
+    const c={id:args[6],author_id:args[2],author_name:args[3],body:args[4],anchor:JSON.parse(args[5]),version:args[1],created_at:new Date().toISOString()};
+    comments.push(c);return {rows:[c]};
+  }
+  if(sql.includes('FROM review_comments')) return {rows:comments.slice(args[1],args[1]+100)};
+  if(sql.includes('FROM drafts')) return {rows:[{id:args[0],current_version_id:'v1',title:'Review fixture'}]};
+  return {rows:[{id:'v1',version_number:1,object_key:'test'}]};
+});
+mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield Buffer.from(html);})()}));
+const server=createApp().listen(0,'127.0.0.1');
+await new Promise(r=>server.once('listening',r));
+const base=`http://127.0.0.1:${server.address().port}`;config.publicBaseUrl=base;
+const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});
+try {
+  for(const mobile of [false,true]) {
+    comments.length=0;
+    const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1280,height:900},isMobile:mobile,hasTouch:mobile});
+    const signed=createSessionCookie({accountId:'friend',accountName:'Friend <img src=x onerror=alert(1)>'}).split(';')[0];
+    await context.addCookies([{name:'postplan_session',value:signed.slice(signed.indexOf('=')+1),url:base}]);
+    const page=await context.newPage();
+    const errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(base+'/d/abcdefghijkl');
+    await page.locator('#review-toggle').click();
+    let frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
+    await frame.waitForFunction(()=>window.postplan);
+    assert.equal(await page.evaluate(()=>window.untrusted),undefined);
+    await frame.evaluate(()=>{
+      const range=document.createRange();range.setStart(document.querySelector('h1').firstChild,0);range.setEnd(document.querySelector('h1').firstChild,5);
+      const s=getSelection();s.removeAllRanges();s.addRange(range);document.dispatchEvent(new Event('keyup'));
+    });
+    await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Hello'));
+    await page.locator('#review-body').fill('Please rename <script>alert(1)</script>');
+    await page.locator('#review-submit').click();
+    await page.locator('#review-list article').waitFor();
+    assert.equal(comments.length,1);assert.equal(comments[0].author_id,'friend');
+    assert.equal(comments[0].anchor.quote,'Hello');assert.equal(comments[0].anchor.suffix,' world');
+    assert.equal(comments[0].version,1);
+    assert.equal(await page.locator('#review-list script, #review-list img').count(),0);
+    await page.reload();await page.locator('#review-toggle').click();
+    await page.locator('#review-list article').waitFor();
+    assert.match(await page.locator('#review-list').innerText(),/Friend <img/);
+    frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
+    await page.locator('#review-list article button').click();
+    await frame.waitForFunction(()=>document.querySelector('h1').style.outline.includes('3px'));
+    await page.locator('#review-pick').click();await frame.locator('p').click();
+    await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Nearby context'));
+    await page.locator('#review-body').fill('Element comment');await page.locator('#review-submit').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#review-list article').length===2);
+    assert.equal(comments[1].anchor.type,'element');
+    const {stdout}=await promisify(execFile)(process.execPath,['node_modules/postplan/bin/postplan.js','comments','abcdefghijkl','--json'],{cwd:new URL('..',import.meta.url),env:{...process.env,POSTPLAN_API_URL:base,POSTPLAN_API_KEY:'test'}});
+    assert.equal(JSON.parse(stdout)[0].author_id,'friend');assert.equal(JSON.parse(stdout).length,2);
+    assert.deepEqual(errors,[]);
+    await context.close();
+  }
+  console.log('PASS: desktop/mobile text and element comments, author attribution, reload, locate, XSS isolation, CLI JSON');
+} finally {await browser.close();mock.restoreAll();await new Promise(r=>server.close(r));await pool.end();}

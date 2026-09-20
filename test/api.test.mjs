@@ -36,12 +36,31 @@ test('canonical links provide preview metadata and sandboxed JavaScript, raw sta
   const res = await fetch(`${base}/d/abcdefghijkl`, {headers:{'User-Agent':'Slackbot-LinkExpanding 1.0'}});
   assert.equal(res.status,200);
   const csp = res.headers.get('content-security-policy');
-  assert.match(csp,/sandbox allow-scripts/);
+  assert.match(csp,/script-src 'nonce-/);
   assert.doesNotMatch(csp,/allow-same-origin/);
-  assert.match(csp,/script-src 'unsafe-inline' https:/);
   const body = await res.text();
   assert.match(body,/property="og:title" content="Preview &amp; test"/);
   assert.match(body,/property="og:description" content="A &quot;shared&quot; report"/);
-  assert.match(body,/<script>document.body.dataset.ready="yes"<\/script>/);
+  assert.match(body,/id="review-toggle"/);
+  assert.match(body,/sandbox="allow-scripts allow-popups allow-downloads"/);
+  assert.doesNotMatch(body,/<script>document.body.dataset.ready="yes"<\/script>/);
+  assert.equal(await (await fetch(`${base}/d/abcdefghijkl/raw`)).text(),html);
+});
+
+test('opt-in wrapper keeps untrusted code in a sandboxed frame and raw bytes unchanged', async () => {
+  const html='<meta name="postplan-storage" content="browser"><title>Picks</title><script>globalThis.untrustedMarker=true</script>';
+  mock.method(pool,'query',async sql=>({rows:sql.includes('FROM drafts')?[{id:'abcdefghijkl',current_version_id:'v1',title:'Picks'}]:[{version_number:1,object_key:'test'}]}));
+  mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield Buffer.from(html);})()}));
+  const res=await fetch(`${base}/d/abcdefghijkl`);
+  assert.equal(res.status,200);
+  assert.match(res.headers.get('content-security-policy'),/script-src 'nonce-/);
+  assert.equal(res.headers.get('referrer-policy'),'no-referrer');
+  assert.doesNotMatch(await res.text(),/untrustedMarker/);
+  const frame=await fetch(`${base}/d/abcdefghijkl?postplan-frame=1`);
+  assert.match(frame.headers.get('content-security-policy'),/sandbox allow-scripts allow-popups allow-downloads/);
+  assert.doesNotMatch(frame.headers.get('content-security-policy'),/allow-same-origin/);
+  const framed=await frame.text();
+  assert.match(framed,/postplan.storage.ready/);
+  assert.match(framed,/untrustedMarker/);
   assert.equal(await (await fetch(`${base}/d/abcdefghijkl/raw`)).text(),html);
 });
