@@ -33,6 +33,7 @@ export function registerReviewRoutes(app) {
     next();
   };
   app.use('/review-api',signedIn);
+  app.get('/review-api/session',(req,res)=>res.json({name:req.reviewer.accountName||'Reviewer'}));
   const limit=createRateLimiter({windowMs:60_000,max:30,keyPrefix:'review',key:req=>req.reviewer.accountId});
   async function list(req,res,next) {
     try {

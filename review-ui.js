@@ -1,6 +1,23 @@
 // Runs inside the opaque draft frame. Only locator metadata crosses to the trusted UI.
 export function reviewChild(port) {
   let picking=false;
+  let highlighted,previousOutline,previousPriority,highlightTimer;
+  function clearHighlight() {
+    clearTimeout(highlightTimer);
+    if(highlighted) {
+      if(previousOutline) highlighted.style.setProperty('outline',previousOutline,previousPriority);
+      else highlighted.style.removeProperty('outline');
+      highlighted=null;
+    }
+  }
+  function highlight(element,duration=0) {
+    clearHighlight();
+    highlighted=element;
+    previousOutline=element.style.getPropertyValue('outline');
+    previousPriority=element.style.getPropertyPriority('outline');
+    element.style.setProperty('outline','3px solid #e88c30','important');
+    if(duration) highlightTimer=setTimeout(clearHighlight,duration);
+  }
   function selector(element) {
     const parts=[];
     for(let e=element;e && e.nodeType===1;e=e.parentElement) {
@@ -14,6 +31,7 @@ export function reviewChild(port) {
     if(!element || !quote.trim() || quote.length>2000) return;
     const path=selector(element);
     if(path.length>1000) return;
+    highlight(element);
     port.postMessage({type:'review.anchor',anchor:{type,quote,selector:path,prefix,suffix}});
   }
   function selection() {
@@ -37,14 +55,14 @@ export function reviewChild(port) {
   },true);
   port.addEventListener('message',({data})=>{
     if(data?.type==='review.pick') { picking=true;return; }
+    if(data?.type==='review.clear') { clearHighlight();return; }
     if(data?.type!=='review.locate') return;
     try {
       const a=data.anchor,element=document.querySelector(a.selector);
       const text=element && (element.textContent||element.getAttribute('alt')||element.localName);
       if(!element || !text.includes(a.quote)) throw new Error('Anchor no longer matches this document');
       element.scrollIntoView({block:'center',behavior:'smooth'});
-      const old=element.style.outline;element.style.outline='3px solid #e88c30';
-      setTimeout(()=>{element.style.outline=old;},2500);
+      highlight(element,2500);
       port.postMessage({type:'review.located'});
     } catch { port.postMessage({type:'review.missing'}); }
   });
@@ -60,12 +78,18 @@ export function mountReview(draftId,version,send) {
   const submit=document.getElementById('review-submit');
   const list=document.getElementById('review-list');
   const more=document.getElementById('review-more');
+  const identity=document.getElementById('review-identity');
+  const signIn=document.getElementById('review-sign-in');
+  let signedIn=false;
   let anchor=null,offset=0;
   const endpoint=`/review-api/drafts/${encodeURIComponent(draftId)}/comments`;
   const message=text=>{status.textContent=text;};
   async function request(url,options) {
     const response=await fetch(url,options);
-    if(response.status===401) throw new Error('Sign in to read and add comments.');
+    if(response.status===401) {
+      signedIn=false;identity.textContent='Not signed in';signIn.hidden=false;submit.disabled=true;
+      throw new Error('Sign in to read and add comments, then press Refresh.');
+    }
     if(!response.ok) throw new Error(`Comments request failed (${response.status})`);
     return response.json();
   }
@@ -85,11 +109,19 @@ export function mountReview(draftId,version,send) {
   }
   async function load(reset=false) {
     try {
-      if(reset) {offset=0;list.replaceChildren();}
+      if(reset) {
+        offset=0;list.replaceChildren();more.hidden=true;
+        signedIn=false;submit.disabled=true;identity.textContent='Checking sign-in…';
+        const session=await request('/review-api/session');
+        signedIn=true;identity.textContent=`Signed in as ${session.name}`;signIn.hidden=true;submit.disabled=false;
+      }
       const comments=await request(endpoint+'?offset='+offset);
       comments.forEach(render);offset+=comments.length;more.hidden=comments.length<100;
       message(offset?'':'No comments yet.');
-    } catch(error) {message(error.message);}
+    } catch(error) {
+      if(identity.textContent==='Checking sign-in…') {identity.textContent='Unable to check sign-in. Press Refresh.';signIn.hidden=false;}
+      message(error.message);
+    }
   }
   document.getElementById('review-toggle').onclick=()=>{
     panel.hidden=!panel.hidden;
@@ -104,10 +136,11 @@ export function mountReview(draftId,version,send) {
     submit.disabled=true;
     try {
       await request(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:input.value,anchor,version})});
+      send({type:'review.clear'});
       input.value='';anchor=null;quote.textContent='Select text in the page, or pick an element.';
       await load(true);
     } catch(error) {message(error.message);}
-    finally {submit.disabled=false;}
+    finally {submit.disabled=!signedIn;}
   };
   return data=>{
     if(data.type==='review.missing') {message('Anchor no longer matches this document. The saved quote is shown below.');return;}
@@ -123,9 +156,9 @@ export function mountReview(draftId,version,send) {
 export const reviewMarkup=`<button id="review-toggle" type="button">Comments</button><aside id="review-panel" aria-label="Review comments" hidden>
   <header><strong>Review comments</strong><button id="review-close" type="button" aria-label="Close comments">Close</button></header>
   <p>Comments are shared with signed-in reviewers. Your name will be visible.</p>
-  <a href="/auth/sign-in" target="_blank" rel="noopener">Sign in</a> <button id="review-refresh" type="button">Refresh</button>
+  <p id="review-identity" role="status">Checking sign-in…</p><a id="review-sign-in" href="/auth/sign-in" target="_blank" rel="noopener">Sign in</a> <button id="review-refresh" type="button">Refresh</button>
   <p id="review-anchor">Select text in the page, or pick an element.</p><button id="review-pick" type="button">Pick element</button>
   <label for="review-body">Comment</label><textarea id="review-body" maxlength="4000" rows="3"></textarea>
-  <button id="review-submit" type="button">Post comment</button><p id="review-status" role="status"></p>
+  <button id="review-submit" type="button" disabled>Post comment</button><p id="review-status" role="status"></p>
   <div id="review-list"></div><button id="review-more" type="button" hidden>Load more</button></aside>`;
-export const reviewStyle=`#review-toggle{position:fixed;right:16px;top:12px;z-index:2;box-shadow:0 2px 12px #0003}#review-panel{position:fixed;right:0;top:56px;bottom:0;width:min(370px,90vw);box-sizing:border-box;overflow:auto;background:#faf9f6;color:#20242b;padding:18px;box-shadow:-4px 0 20px #0002;font:14px/1.5 system-ui;z-index:3}#review-panel[hidden]{display:none}#review-panel header{display:flex;justify-content:space-between;align-items:center}#review-panel button,#review-toggle{border:1px solid #b8bec6;background:#fff;color:#20242b;border-radius:7px;padding:8px 12px;cursor:pointer;font:inherit}#review-panel label,#review-panel textarea{display:block;width:100%;box-sizing:border-box;margin:8px 0}#review-panel textarea{font:16px system-ui;padding:8px}#review-panel article{border-top:1px solid #ccd0d5;padding:16px 0;overflow-wrap:anywhere}#review-panel article strong,#review-panel article button{display:block;margin-bottom:8px}#review-panel article p,#review-anchor{white-space:pre-wrap;overflow-wrap:anywhere}#review-panel a{color:#245b9b}#review-panel #review-submit{background:#244b45;color:white}#review-status{color:#65502b}@media(max-width:600px){#review-panel{top:auto;left:0;bottom:0;width:100%;max-height:52%;border-top:1px solid #ccd0d5}}`;
+export const reviewStyle=`#review-toggle{position:fixed;right:16px;top:12px;z-index:2;box-shadow:0 2px 12px #0003}#review-panel{position:fixed;right:0;top:56px;bottom:0;width:min(370px,90vw);box-sizing:border-box;overflow:auto;background:#faf9f6;color:#20242b;padding:18px;box-shadow:-4px 0 20px #0002;font:14px/1.5 system-ui;z-index:3}#review-panel[hidden]{display:none}#review-panel header{display:flex;justify-content:space-between;align-items:center}#review-panel button,#review-toggle{border:1px solid #b8bec6;background:#fff;color:#20242b;border-radius:7px;padding:8px 12px;cursor:pointer;font:inherit}#review-panel label,#review-panel textarea{display:block;width:100%;box-sizing:border-box;margin:8px 0}#review-panel textarea{font:16px system-ui;padding:8px}#review-panel article{border-top:1px solid #ccd0d5;padding:16px 0;overflow-wrap:anywhere}#review-panel article strong,#review-panel article button{display:block;margin-bottom:8px}#review-panel article p,#review-anchor{white-space:pre-wrap;overflow-wrap:anywhere}#review-panel a{color:#245b9b}#review-panel #review-submit{background:#244b45;color:white}#review-panel button:disabled{opacity:.45;cursor:not-allowed}#review-status{color:#65502b}@media(max-width:600px){#review-panel{top:auto;left:0;bottom:0;width:100%;max-height:52%;border-top:1px solid #ccd0d5}}`;

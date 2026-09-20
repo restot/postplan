@@ -13,6 +13,11 @@ before(async()=>{server=createApp().listen(0,'127.0.0.1');await new Promise(r=>s
 afterEach(()=>mock.restoreAll());
 after(async()=>{await new Promise(r=>server.close(r));await pool.end();});
 const post=(body=payload,headers={})=>fetch(base+'/review-api/drafts/abcdefghijkl/comments',{method:'POST',headers:{cookie,origin:'https://postplan.test','content-type':'application/json',...headers},body:JSON.stringify(body)});
+test('session status returns authenticated name without email',async()=>{
+  const res=await fetch(base+'/review-api/session',{headers:{cookie}});
+  assert.equal(res.status,200);assert.deepEqual(await res.json(),{name:'Friend'});
+  assert.equal((await fetch(base+'/review-api/session')).status,401);
+});
 test('comments require sign-in and same-origin JSON writes',async()=>{
   assert.equal((await post(payload,{cookie:''})).status,401);
   assert.equal((await post(payload,{origin:'null'})).status,403);

@@ -41,6 +41,9 @@ try {
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.goto(base+'/d/abcdefghijkl');
     await page.locator('#review-toggle').click();
+    await page.waitForFunction(()=>document.querySelector('#review-identity')?.textContent.startsWith('Signed in as Friend'));
+    assert.equal(await page.locator('#review-sign-in').isVisible(),false);
+    assert.equal(await page.locator('#review-submit').isEnabled(),true);
     let frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
     await frame.waitForFunction(()=>window.postplan);
     assert.equal(await page.evaluate(()=>window.untrusted),undefined);
@@ -64,12 +67,22 @@ try {
     await frame.waitForFunction(()=>document.querySelector('h1').style.outline.includes('3px'));
     await page.locator('#review-pick').click();await frame.locator('p').click();
     await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Nearby context'));
+    assert.match(await frame.locator('p').evaluate(e=>e.style.outline),/3px/);
+    assert.equal(await frame.locator('h1').evaluate(e=>e.style.outline),'');
+    await page.waitForTimeout(2700);
+    assert.match(await frame.locator('p').evaluate(e=>e.style.outline),/3px/);
     await page.locator('#review-body').fill('Element comment');await page.locator('#review-submit').click();
     await page.waitForFunction(()=>document.querySelectorAll('#review-list article').length===2);
     assert.equal(comments[1].anchor.type,'element');
+    await frame.waitForFunction(()=>document.querySelector('p').style.outline==='');
     const {stdout}=await promisify(execFile)(process.execPath,['node_modules/postplan/bin/postplan.js','comments','abcdefghijkl','--json'],{cwd:new URL('..',import.meta.url),env:{...process.env,POSTPLAN_API_URL:base,POSTPLAN_API_KEY:'test'}});
     assert.equal(JSON.parse(stdout)[0].author_id,'friend');assert.equal(JSON.parse(stdout).length,2);
     assert.deepEqual(errors,[]);
+    await context.clearCookies();
+    await page.locator('#review-refresh').click();
+    await page.waitForFunction(()=>document.querySelector('#review-identity').textContent==='Not signed in');
+    assert.equal(await page.locator('#review-sign-in').isVisible(),true);
+    assert.equal(await page.locator('#review-submit').isDisabled(),true);
     await context.close();
   }
   console.log('PASS: desktop/mobile text and element comments, author attribution, reload, locate, XSS isolation, CLI JSON');

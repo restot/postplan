@@ -55,6 +55,8 @@ Methods return Promises, connect automatically, and reject on errors. Initialize
 
 Open **Comments**, sign in with Shoo, select text or use **Pick element**, then write a comment. Any signed-in visitor with the draft URL can read/add comments. Comments expose the reviewer's account ID and name, not their email. Names are snapshots at submission time, not verified legal identities.
 
+The panel shows **Signed in as [name]** or **Not signed in**. Posting is disabled while signed out or checking the session. After signing in in the new tab, press **Refresh**. Picked elements keep an orange outline until another anchor is selected or the comment is posted; existing outlines are restored afterward.
+
 Comments store the body, author, timestamp, draft version, selected quote, CSS element path and nearby text. They never change the uploaded HTML or a local source file. The wrapper pins its frame to the reviewed version so concurrent uploads cannot attach feedback to the wrong version. Clicking a saved anchor scrolls to its containing element when it still matches. Older-version comments link to that version; changed dynamic content may no longer match.
 
 Agents read their own drafts' comments with:
