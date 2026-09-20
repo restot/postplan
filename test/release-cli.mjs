@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync,rmSync,existsSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+const root=fileURLToPath(new URL('..',import.meta.url));
+const dir=mkdtempSync(`${tmpdir()}/postplan-release-test-`);
+const env={...process.env,HOME:dir,POSTPLAN_CONFIG_DIR:`${dir}/profile`,POSTPLAN_API_KEY:'test-only',POSTPLAN_API_URL:'http://127.0.0.1:1'};
+try {
+  execFileSync(process.execPath,['scripts/build-cli.mjs',dir],{cwd:root,env,stdio:'pipe'});
+  const version=JSON.parse(readFileSync(`${root}/package.json`)).version;
+  const file=`restot-postplan-${version}.tgz`;
+  const bytes=readFileSync(`${dir}/${file}`);
+  assert.equal(readFileSync(`${dir}/SHA256SUMS`,'utf8'),`${createHash('sha256').update(bytes).digest('hex')}  ${file}\n`);
+  const entries=execFileSync('tar',['-tzf',`${dir}/${file}`],{encoding:'utf8'});
+  for(const name of ['package/LICENSE','package/UPSTREAM-LICENSE','package/bin/postplan.js','package/node_modules/commander/LICENSE','package/node_modules/entities/LICENSE']) assert.ok(entries.includes(name),name);
+  assert.doesNotMatch(entries,/credentials|\.env|src\/server|src\/db\.js|test\/|\.git\//);
+  execFileSync('npm',['install','--global','--prefix',`${dir}/install`,'--offline','--ignore-scripts','--no-audit','--no-fund',`${dir}/${file}`],{env,stdio:'pipe'});
+  const cli=`${dir}/install/bin/postplan`;
+  assert.equal(execFileSync(cli,['--version'],{env,encoding:'utf8'}).trim(),version);
+  assert.match(execFileSync(cli,['comments','--help'],{env,encoding:'utf8'}),/--json/);
+  const installed=`${dir}/install/lib/node_modules/@restot/postplan`;
+  const manifest=JSON.parse(readFileSync(`${installed}/package.json`));
+  assert.equal(manifest.license,'MIT');assert.equal(manifest.scripts,undefined);
+  assert.match(readFileSync(`${installed}/bin/postplan.js`,'utf8'),/DEFAULT_API_URL = "https:\/\/postplan.restot.top"/);
+  const {validateHtml}=await import(`${installed}/src/html-policy.js`);
+  assert.equal(validateHtml('<script>console.log(1)</script><!--'+'x'.repeat(600000)+'-->').ok,true);
+  assert.equal(existsSync(`${dir}/profile/credentials.json`),false);
+  console.log('PASS: CLI release allowlist, licenses, checksum, offline global install, version, comments, patched upload policy');
+} finally {rmSync(dir,{recursive:true,force:true});}
