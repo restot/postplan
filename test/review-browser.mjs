@@ -20,11 +20,15 @@ mock.method(pool,'query',async(sql,args)=>{
   if(sql.includes('AS current')) return {rows:[{version:2,created_at:'2026-09-20T00:00:00Z',current:true},{version:1,created_at:'2026-09-19T00:00:00Z',current:false}]};
   if(sql.includes('api_keys')) return {rows:[{id:'key',account_id:'owner'}]};
   if(sql.includes('INSERT INTO review_comments')) {
-    const c={id:args[6],author_id:args[2],author_name:args[3],body:args[4],anchor:JSON.parse(args[5]),version:args[1],created_at:new Date().toISOString()};
+    const c={id:args[6],author_id:args[2],author_name:args[3],body:args[4],anchor:JSON.parse(args[5]),version:args[1],created_at:new Date().toISOString(),published_at:null};
     comments.push(c);return {rows:[c]};
   }
-  if(sql.includes('FROM review_comments')) return {rows:comments.slice(args[1],args[1]+100)};
-  if(sql.includes('FROM drafts')) return {rows:[{id:args[0],current_version_id:'v1',title:'Review fixture'}]};
+  if(sql.includes('UPDATE review_comments')) {
+    const c=comments.find(c=>c.id===args[1]&&c.author_id===args[2]);
+    if(!c) return {rows:[]};c.published_at||=new Date().toISOString();return {rows:[{id:c.id,published_at:c.published_at}]};
+  }
+  if(sql.includes('FROM review_comments')) return {rows:comments.filter(c=>c.published_at||c.author_id===args[2]||args[3]).slice(args[1],args[1]+100).map(c=>({...c,can_publish:c.author_id===args[2]&&!c.published_at}))};
+  if(sql.includes('FROM drafts')) return {rows:[{id:args[0],account_id:'owner',current_version_id:'v1',title:'Review fixture'}]};
   return {rows:[{id:'v1',version_number:args?.[1]||1,object_key:'test'}]};
 });
 mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield Buffer.from(html);})()}));
@@ -59,12 +63,15 @@ try {
     assert.equal(comments.length,1);assert.equal(comments[0].author_id,'friend');
     assert.equal(comments[0].anchor.quote,'Hello');assert.equal(comments[0].anchor.suffix,' world');
     assert.equal(comments[0].version,1);
+    assert.equal(comments[0].published_at,null);
+    assert.match(await page.locator('#review-list article').innerText(),/Private/);
+    assert.equal(await page.getByRole('button',{name:'Publish',exact:true}).count(),1);
     assert.equal(await page.locator('#review-list script, #review-list img').count(),0);
     await page.reload();await page.locator('#review-toggle').click();
     await page.locator('#review-list article').waitFor();
     assert.match(await page.locator('#review-list').innerText(),/Friend <img/);
     frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
-    await page.locator('#review-list article button').click();
+    await page.locator('#review-list article button:not([data-publish])').click();
     await frame.waitForFunction(()=>document.querySelector('h1').style.outline.includes('3px'));
     await page.locator('#review-pick').click();await frame.locator('p').click();
     await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Nearby context'));
@@ -78,6 +85,20 @@ try {
     await frame.waitForFunction(()=>document.querySelector('p').style.outline==='');
     const {stdout}=await promisify(execFile)(process.execPath,['node_modules/postplan/bin/postplan.js','comments','abcdefghijkl','--json'],{cwd:new URL('..',import.meta.url),env:{...process.env,POSTPLAN_API_URL:base,POSTPLAN_API_KEY:'test'}});
     assert.equal(JSON.parse(stdout)[0].author_id,'friend');assert.equal(JSON.parse(stdout).length,2);
+    // Owner can read private feedback but cannot publish another author's comment.
+    const owner=createSessionCookie({accountId:'owner',accountName:'Owner'}).split(';')[0];
+    await context.addCookies([{name:'postplan_session',value:owner.slice(owner.indexOf('=')+1),url:base}]);
+    await page.locator('#review-refresh').click();
+    await page.waitForFunction(()=>document.querySelector('#review-identity').textContent==='Signed in as Owner'&&document.querySelectorAll('#review-list article').length===2);
+    assert.equal(await page.getByRole('button',{name:'Publish',exact:true}).count(),0);
+    await context.addCookies([{name:'postplan_session',value:signed.slice(signed.indexOf('=')+1),url:base}]);
+    await page.locator('#review-refresh').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#review-list button[data-publish]').length===2);
+    page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'Publish',exact:true}).nth(1).click();
+    assert.equal(comments[1].published_at,null);
+    page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Publish',exact:true}).nth(1).click();
+    await page.waitForFunction(()=>document.querySelectorAll('#review-list button[data-publish]').length===1);
+    assert.ok(comments[1].published_at);assert.match(await page.locator('#review-list').innerText(),/Published/);
     assert.deepEqual(errors,[]);
     await page.waitForFunction(()=>document.querySelectorAll('#review-version option').length===2);
     assert.equal(await page.locator('#review-version').inputValue(),'1');
@@ -98,11 +119,14 @@ try {
     await page.waitForFunction(()=>document.querySelector('#review-identity').textContent==='Not signed in');
     assert.equal(await page.locator('#review-sign-in').isVisible(),true);
     assert.equal(await page.locator('#review-submit').isDisabled(),true);
+    await page.waitForFunction(()=>document.querySelectorAll('#review-list article').length===1);
+    assert.equal(await page.getByRole('button',{name:'Publish',exact:true}).count(),0);
+    assert.doesNotMatch(await page.locator('#review-list').innerText(),/Please rename/);
     assert.equal(await page.locator('#review-version').isEnabled(),true);
     await page.locator('#review-version').selectOption('1');
     await page.waitForURL('**/d/abcdefghijkl/v/1?review=1');
     await page.waitForFunction(()=>document.querySelector('#review-version').value==='1');
     await context.close();
   }
-  console.log('PASS: desktop/mobile text and element comments, author attribution, reload, locate, XSS isolation, CLI JSON');
+  console.log('PASS: desktop/mobile private comments, author-only publish confirmation, public signed-out reads, owner/CLI visibility, version navigation, anchors and XSS isolation');
 } finally {await browser.close();mock.restoreAll();await new Promise(r=>server.close(r));await pool.end();}

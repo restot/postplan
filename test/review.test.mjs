@@ -52,10 +52,67 @@ test('author comes from session, comment is bound to an existing public draft ve
   mock.restoreAll();mock.method(pool,'query',async()=>({rows:[]}));
   assert.equal((await post()).status,404);
 });
-test('CLI reads require ownership and return anchored author-attributed comments',async()=>{
-  mock.method(pool,'query',async sql=>({rows:sql.includes('api_keys')?[{id:'key',account_id:'owner'}]:sql.includes('SELECT id FROM drafts')?[{id:'abcdefghijkl'}]:[{id:'1',author_name:'Friend',body:payload.body,anchor:payload.anchor,version:1}]}));
+test('CLI reads pass the bearer identity and ownership into the visibility filter',async()=>{
+  mock.method(pool,'query',async(sql,args)=>{
+    if(sql.includes('api_keys')) return {rows:[{id:'key',account_id:'owner'}]};
+    if(sql.includes('FROM drafts')) return {rows:[{id:'abcdefghijkl',account_id:'owner'}]};
+    assert.match(sql,/c\.published_at IS NOT NULL/);assert.match(sql,/c\.author_id=\$3/);
+    assert.deepEqual(args,['abcdefghijkl',0,'owner',true]);
+    return {rows:[{id:'1',author_name:'Friend',body:payload.body,anchor:payload.anchor,version:1,published_at:null,can_publish:false}]};
+  });
   const res=await fetch(base+'/api/drafts/abcdefghijkl/comments',{headers:{authorization:'Bearer test'}});
   assert.equal(res.status,200);assert.equal((await res.json())[0].author_name,'Friend');
   mock.restoreAll();mock.method(pool,'query',async sql=>({rows:sql.includes('api_keys')?[{id:'key',account_id:'other'}]:[]}));
   assert.equal((await fetch(base+'/api/drafts/abcdefghijkl/comments',{headers:{authorization:'Bearer test'}})).status,404);
+});
+test('anonymous readers get the published-only filter and uncacheable responses',async()=>{
+  mock.method(pool,'query',async(sql,args)=>{
+    if(sql.includes('FROM drafts')) return {rows:[{id:'abcdefghijkl',account_id:'owner'}]};
+    assert.match(sql,/c\.published_at IS NOT NULL/);assert.match(sql,/c\.author_id=\$3/);
+    assert.match(sql,/can_publish/);assert.deepEqual(args,['abcdefghijkl',0,null,false]);
+    return {rows:[]};
+  });
+  const res=await fetch(base+'/review-api/drafts/abcdefghijkl/comments');
+  assert.equal(res.status,200);assert.deepEqual(await res.json(),[]);
+  assert.match(res.headers.get('cache-control'),/no-store/);
+});
+test('browser authors see their private comments without gaining report-owner privileges',async()=>{
+  mock.method(pool,'query',async(sql,args)=>{
+    if(sql.includes('FROM drafts')) return {rows:[{id:'abcdefghijkl',account_id:'owner'}]};
+    assert.match(sql,/c\.published_at IS NOT NULL/);assert.match(sql,/c\.author_id=\$3/);
+    assert.deepEqual(args,['abcdefghijkl',100,'friend',false]);return {rows:[]};
+  });
+  assert.equal((await fetch(base+'/review-api/drafts/abcdefghijkl/comments?offset=100',{headers:{cookie}})).status,200);
+});
+test('saving ignores forged publication fields and creates a private comment',async()=>{
+  mock.method(pool,'query',async(sql,args)=>{
+    assert.match(sql,/RETURNING[^]*published_at/);
+    assert.doesNotMatch(sql,/INSERT INTO review_comments \([^)]*published_at/);
+    return {rows:[{id:'1',author_id:'friend',published_at:null}]};
+  });
+  const res=await post({...payload,published_at:'2026-01-01T00:00:00Z',can_publish:false});
+  assert.equal(res.status,201);const body=await res.json();
+  assert.equal(body.published_at,null);assert.equal(body.can_publish,true);
+});
+const commentId='cd84805d-8b2d-4a64-98bd-a9844c25a770';
+const publish=(id=commentId,headers={})=>fetch(`${base}/review-api/drafts/abcdefghijkl/comments/${id}/publish`,{method:'POST',headers:{cookie,origin:'https://postplan.test','content-type':'application/json',...headers},body:'{}'});
+test('publishing requires sign-in, same-origin JSON and a valid comment ID',async()=>{
+  assert.equal((await publish(commentId,{cookie:''})).status,401);
+  assert.equal((await publish(commentId,{origin:'null'})).status,403);
+  assert.equal((await publish(commentId,{origin:'https://evil.test'})).status,403);
+  assert.equal((await publish(commentId,{'content-type':'text/plain'})).status,415);
+  assert.equal((await publish('not-a-uuid')).status,422);
+});
+test('publish is bound to author, draft and availability, and is idempotent',async()=>{
+  mock.method(pool,'query',async(sql,args)=>{
+    assert.match(sql,/UPDATE review_comments/);assert.match(sql,/c\.author_id=\$3/);
+    assert.match(sql,/c\.draft_id=\$1/);assert.match(sql,/c\.id=\$2/);
+    assert.match(sql,/deleted_at IS NULL/);assert.match(sql,/disabled_at IS NULL/);
+    assert.match(sql,/COALESCE\(c\.published_at,now\(\)\)/);
+    assert.deepEqual(args,['abcdefghijkl',commentId,'friend']);
+    return {rows:[{id:commentId,published_at:'2026-09-24T00:00:00Z'}]};
+  });
+  const res=await publish();assert.equal(res.status,200);assert.ok((await res.json()).published_at);
+  mock.restoreAll();mock.method(pool,'query',async()=>({rows:[]}));
+  assert.equal((await publish()).status,404);
 });

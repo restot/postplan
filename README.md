@@ -46,10 +46,11 @@ The packaged CLI defaults to `https://postplan.restot.top`. Use `--api-url` when
 | Run interactive pages | Inline scripts, modules, HTTPS scripts, event handlers, stylesheets and fonts are allowed inside the sandbox. |
 | Download from a page | Sandboxed downloads work, including client-generated JSON exports. |
 | Save picks on one device | A Promise-based storage API saves up to 1 MiB per draft in the viewer's browser. |
-| Review together | Signed-in viewers can leave comments on selected text or a picked element. |
+| Review privately | New comments are visible only to their author and the report owner, including their authenticated agents. |
+| Publish a comment | Only its author can press Publish to make it visible to anyone with the report link. |
 | See who commented | Comments include the author's account ID, display name, timestamp and reviewed version. |
 | Find the anchor | Picked elements stay outlined. Saved comments can scroll to the matching element or link to the older version. |
-| Read feedback with an agent | `postplan comments <draft-id> --json` returns the owner's draft feedback. |
+| Read feedback with an agent | `postplan comments <draft-id> --json` applies the same author/owner/public visibility rules as the browser. |
 | Share link previews | Canonical pages include missing Open Graph and Twitter-card metadata. Existing metadata stays intact. |
 | Use separate accounts | Shoo sign-in creates a separate account for each identity. The dashboard lists that account's drafts and versions. |
 | Manage CLI keys | Create and revoke personal API keys through the web UI. |
@@ -88,12 +89,16 @@ Select text, or press **Pick element** and tap part of the page. The selected el
 
 Each comment stores the body, author, timestamp, draft version, quote, CSS element path and nearby text. The wrapper pins the document to the reviewed version, even if someone uploads an update while you read. Dynamic page content can still change and invalidate a locator. The saved quote remains visible.
 
-Any signed-in visitor who knows the draft URL can read and add comments. CLI comment reads require an API key belonging to the draft's owner. Display names come from authenticated accounts, but they are not verified legal names. Comments do not expose account email addresses.
+Press **Save private comment** to save feedback for its author and the report owner. Their authenticated CLI/agent access can read it too. Other reviewers cannot see it. Only the author gets a **Publish** button, with confirmation before the comment, anchor and author name become visible to anyone with the report link, including signed-out visitors. The report owner cannot publish someone else's private comment. There is no comment-unpublish action.
+
+The CLI uses its bearer key identity: report owners receive all comments, other authors receive their own private comments plus published comments, and unrelated accounts receive only published comments. Browser cookies never expand a CLI key's access. Display names come from authenticated accounts, but they are not verified legal names. Comments do not expose account email addresses.
+
+Upgrading an existing deployment adds a nullable `published_at` column. Existing comments become private without deleting their content. Repeated startup preserves published status. Do not roll back to pre-privacy server code: it does not filter private comments. This change cannot retract comments people already read or copied before the upgrade.
 
 An agent reads a JSON array with these fields:
 
 ```text
-id, author_id, author_name, created_at, version, body
+id, author_id, author_name, created_at, version, body, published_at, can_publish
 anchor: type, quote, selector, prefix, suffix
 ```
 
@@ -105,11 +110,12 @@ Comments never rewrite uploaded HTML or local files. The agent reads feedback, e
 | --- | --- |
 | `GET /review-api/session` | Signed browser session. Returns the display name. |
 | `GET /review-api/drafts/:draftId/versions` | Public. Returns `version`, `created_at` and `current`, newest first. |
-| `GET /review-api/drafts/:draftId/comments` | Signed browser session. |
+| `GET /review-api/drafts/:draftId/comments` | Optional browser session. Anonymous readers get published comments only. |
 | `POST /review-api/drafts/:draftId/comments` | Signed browser session and same-origin JSON. |
-| `GET /api/drafts/:draftId/comments` | Draft owner's bearer key. |
+| `POST /review-api/drafts/:draftId/comments/:commentId/publish` | Comment author's browser session and same-origin JSON. Send `{}`. |
+| `GET /api/drafts/:draftId/comments` | Bearer key, filtered by author/owner/public visibility. |
 
-POST a JSON object with `body`, a positive integer `version`, and `anchor`. The anchor has `type` set to `text` or `element`, plus `quote`, `selector`, `prefix` and `suffix`. Lists return up to 100 comments in creation order. Use `?offset=100` for the next page. The CLI reads all pages.
+POST a JSON object with `body`, a positive integer `version`, and `anchor`. The anchor has `type` set to `text` or `element`, plus `quote`, `selector`, `prefix` and `suffix`. Creation always saves privately; client-supplied publication fields are ignored. `published_at` is null until publication, and `can_publish` is true only for the author of a private comment. Lists apply visibility before pagination and return up to 100 visible comments in creation order. Use `?offset=100` for the next page. The CLI reads all pages. Comment responses are not cacheable.
 
 Comment bodies allow 4,000 characters. Quotes allow 2,000, selectors 1,000, and prefix/suffix context 200 each. Writes are limited to 30 per account per minute.
 

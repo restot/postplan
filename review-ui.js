@@ -83,7 +83,7 @@ export function mountReview(draftId,version,send) {
   const versions=document.getElementById('review-version');
   const versionsStatus=document.getElementById('review-versions-status');
   let signedIn=false;
-  let anchor=null,offset=0;
+  let anchor=null,offset=0,generation=0;
   const endpoint=`/review-api/drafts/${encodeURIComponent(draftId)}/comments`;
   const message=text=>{status.textContent=text;};
   async function loadVersions() {
@@ -127,21 +127,45 @@ export function mountReview(draftId,version,send) {
       send({type:'review.locate',anchor:c.anchor});
     };
     const text=document.createElement('p');text.textContent=c.body;
+    const visibility=document.createElement('p');
+    visibility.textContent=c.published_at?'Published · anyone with this link':'Private · author and report owner only';
     const link=document.createElement('a');link.href=`/d/${encodeURIComponent(draftId)}/v/${c.version}`;link.textContent=`Open version ${c.version}`;
-    item.append(heading,location,text,link);list.append(item);
+    item.append(heading,visibility,location,text,link);
+    if(c.can_publish && !c.published_at) {
+      const publish=document.createElement('button');publish.type='button';publish.textContent='Publish';publish.dataset.publish=c.id;
+      publish.onclick=async()=>{
+        if(!window.confirm('Publish this comment? Anyone with the report link will be able to read your comment and name.')) return;
+        publish.disabled=true;
+        try {
+          await request(`${endpoint}/${encodeURIComponent(c.id)}/publish`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+          await load(true);
+        } catch(error) {message(error.message);publish.disabled=false;}
+      };
+      item.append(publish);
+    }
+    list.append(item);
   }
   async function load(reset=false) {
+    const attempt=reset?++generation:generation;
     try {
       if(reset) {
         offset=0;list.replaceChildren();more.hidden=true;
-        signedIn=false;submit.disabled=true;identity.textContent='Checking sign-in…';
-        const session=await request('/review-api/session');
-        signedIn=true;identity.textContent=`Signed in as ${session.name}`;signIn.hidden=true;submit.disabled=false;
+        signedIn=false;submit.disabled=true;signIn.hidden=true;identity.textContent='Checking sign-in…';
+        const response=await fetch('/review-api/session');
+        if(attempt!==generation) return;
+        if(response.ok) {
+          const session=await response.json();
+          if(attempt!==generation) return;
+          signedIn=true;identity.textContent=`Signed in as ${session.name}`;submit.disabled=false;
+        } else if(response.status===401) {identity.textContent='Not signed in';signIn.hidden=false;}
+        else throw new Error(`Unable to check sign-in (${response.status}). Press Refresh.`);
       }
       const comments=await request(endpoint+'?offset='+offset);
+      if(attempt!==generation) return;
       comments.forEach(render);offset+=comments.length;more.hidden=comments.length<100;
-      message(offset?'':'No comments yet.');
+      message(offset?'':signedIn?'No comments visible to you yet.':'No published comments yet. Sign in to read private feedback or add a comment.');
     } catch(error) {
+      if(attempt!==generation) return;
       if(identity.textContent==='Checking sign-in…') {identity.textContent='Unable to check sign-in. Press Refresh.';signIn.hidden=false;}
       message(error.message);
     }
@@ -180,10 +204,10 @@ export function mountReview(draftId,version,send) {
 export const reviewMarkup=`<button id="review-toggle" type="button">Comments</button><aside id="review-panel" aria-label="Review comments" hidden>
   <header><strong>Review comments</strong><button id="review-close" type="button" aria-label="Close comments">Close</button></header>
   <label for="review-version">Version</label><select id="review-version" disabled aria-describedby="review-versions-status"></select><p id="review-versions-status" role="status"></p>
-  <p>Comments are shared with signed-in reviewers. Your name will be visible.</p>
+  <p>New comments are private to their author and the report owner. Publish makes a comment and your name visible to anyone with this link.</p>
   <p id="review-identity" role="status">Checking sign-in…</p><a id="review-sign-in" href="/auth/sign-in" target="_blank" rel="noopener">Sign in</a> <button id="review-refresh" type="button">Refresh</button>
   <p id="review-anchor">Select text in the page, or pick an element.</p><button id="review-pick" type="button">Pick element</button>
   <label for="review-body">Comment</label><textarea id="review-body" maxlength="4000" rows="3"></textarea>
-  <button id="review-submit" type="button" disabled>Post comment</button><p id="review-status" role="status"></p>
+  <button id="review-submit" type="button" disabled>Save private comment</button><p id="review-status" role="status"></p>
   <div id="review-list"></div><button id="review-more" type="button" hidden>Load more</button></aside>`;
 export const reviewStyle=`#review-toggle{position:fixed;right:16px;top:12px;z-index:2;box-shadow:0 2px 12px #0003}#review-panel{position:fixed;right:0;top:56px;bottom:0;width:min(370px,90vw);box-sizing:border-box;overflow:auto;background:#faf9f6;color:#20242b;padding:18px;box-shadow:-4px 0 20px #0002;font:14px/1.5 system-ui;z-index:3}#review-panel[hidden]{display:none}#review-panel header{display:flex;justify-content:space-between;align-items:center}#review-panel button,#review-toggle{border:1px solid #b8bec6;background:#fff;color:#20242b;border-radius:7px;padding:8px 12px;cursor:pointer;font:inherit}#review-panel label,#review-panel textarea{display:block;width:100%;box-sizing:border-box;margin:8px 0}#review-panel textarea{font:16px system-ui;padding:8px}#review-panel article{border-top:1px solid #ccd0d5;padding:16px 0;overflow-wrap:anywhere}#review-panel article strong,#review-panel article button{display:block;margin-bottom:8px}#review-panel article p,#review-anchor{white-space:pre-wrap;overflow-wrap:anywhere}#review-panel a{color:#245b9b}#review-panel #review-submit{background:#244b45;color:white}#review-panel button:disabled{opacity:.45;cursor:not-allowed}#review-version{width:100%;box-sizing:border-box;padding:8px;font:16px system-ui;border:1px solid #b8bec6;border-radius:7px;background:#fff;color:#20242b}#review-status{color:#65502b}@media(max-width:600px){#review-panel{top:auto;left:0;bottom:0;width:100%;max-height:52%;border-top:1px solid #ccd0d5}}`;

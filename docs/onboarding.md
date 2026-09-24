@@ -2,7 +2,7 @@
 
 Publish an HTML report, send one link, and collect comments attached to the exact text or element being discussed. Update the report without changing its shared link.
 
-This guide uses **Restot Postplan CLI v0.1.1** and **https://postplan.restot.top**. You need Node.js 22 or newer, npm, and your own account. Readers do not need the CLI. Reviewers sign in through Shoo to read or write comments.
+This guide uses **Restot Postplan CLI v0.1.1** and **https://postplan.restot.top**. You need Node.js 22 or newer, npm, and your own account. Readers do not need the CLI. Reviewers sign in through Shoo to save comments or read private feedback they have access to. Published comments are readable without sign-in.
 
 [Source and README](https://github.com/restot/postplan) · [Download v0.1.1](https://github.com/restot/postplan/releases/tag/v0.1.1) · [Shared post-report skill](../skills/post-report/SKILL.md)
 
@@ -100,7 +100,7 @@ The screenshots below show the real application running locally with a sample re
 
 ### Pick the exact thing you mean
 
-Open **Comments**, then select text in the report or press **Pick element** and click a paragraph, heading or other element. An orange outline shows the selected element. Write your feedback and press **Post comment**. The outline stays until you post or choose another anchor.
+Open **Comments**, then select text in the report or press **Pick element** and click a paragraph, heading or other element. An orange outline shows the selected element. Write your feedback and press **Save private comment**. The outline stays until you save or choose another anchor.
 
 ![Desktop report with an orange outline on a selected paragraph and an unposted comment in the side panel.](images/picked-element.png)
 
@@ -108,11 +108,13 @@ Open **Comments**, then select text in the report or press **Pick element** and 
 
 ### Know who said what
 
-Saved comments include the reviewer's display name, timestamp, version, comment body and anchor. Click the quoted anchor to locate it in the viewed version. For a comment on another version, use **Open version** first. Display names identify accounts; they are not verified legal identities.
+Saved comments include the reviewer's display name, timestamp, version, comment body and anchor. **Private** means only the comment author and report owner can read it, including their authenticated CLI/agent access. Other reviewers cannot see it. Click the quoted anchor to locate it in the viewed version. For a comment on another version, use **Open version** first. Display names identify accounts; they are not verified legal identities.
 
 ![Posted comment showing the demo reviewer, version 2, anchor text and feedback.](images/saved-comment.png)
 
 *Comments stay separate from the uploaded HTML. Neither posting nor reading a comment edits your local source file.*
+
+To share a saved comment with everyone, its author presses **Publish** and confirms. The comment, anchor and author name then become visible to anyone with the report link, even without sign-in. The report owner cannot publish a friend's comment for them. There is no comment-unpublish action. Previously stored comments were made private during this update; that cannot retract anything already read or copied.
 
 ### Browse previous versions
 
@@ -124,9 +126,9 @@ The **Version** picker at the top of Comments lists publication dates and marks 
 
 ### Check whether you are signed in
 
-The panel says **Signed in as [name]** or **Not signed in**. While signed out, you can read the report and browse versions, but cannot read or post comments. Use **Sign in**, complete Shoo login in the new tab, return, then press **Refresh**.
+The panel says **Signed in as [name]** or **Not signed in**. While signed out, you can read the report, browse versions and read published comments. Private comments stay hidden and saving stays disabled. Use **Sign in**, complete Shoo login in the new tab, return, then press **Refresh**.
 
-![Signed-out comments panel with the Sign in link and disabled Post comment button.](images/signed-out.png)
+![Signed-out comments panel with the Sign in link and disabled Save private comment button.](images/signed-out.png)
 
 *CLI login does not sign this browser in. The disabled button is expected until the browser session is ready.*
 
@@ -166,7 +168,7 @@ postplan comments <draft-id>
 postplan comments <draft-id> --json
 ```
 
-CLI feedback reads require the draft owner's key. JSON includes the author, body, timestamp, version, selected quote, CSS locator and nearby text. Give your agent the draft ID and ask it to read comments through the CLI, assess the feedback, edit the local HTML and upload the revision. Do not give it your key in a prompt.
+CLI feedback reads use your own key and the same visibility rules as the browser. The report owner sees all comments. Other authors see their own private comments and published comments. Unrelated accounts see only published comments. JSON includes the author, body, timestamp, version, selected quote, CSS locator, nearby text and `published_at`, which is null for private comments. Give your agent the draft ID and ask it to read comments through the CLI. The report owner's agent can assess feedback, edit the local HTML and upload a revision. Do not give it your key in a prompt, and do not copy someone else's private feedback into a public report without permission.
 
 ```sh
 # After editing hello.html, update the same draft and keep its URL:
@@ -259,4 +261,4 @@ The skill runs `postplan` on PATH, using your configured account. It does not cr
 
 The app removes the former upload caps, but proxy limits and server capacity still apply. Keep a local copy of your reports. For your own deployment, see the server configuration and isolation notes in the [README](https://github.com/restot/postplan#run-your-own-server).
 
-Guide and screenshots prepared against CLI v0.1.1 and application commit `42e627b`, September 24, 2026. MIT licensed. No credentials, private reports or production account identities are included.
+Guide and screenshots updated for private-by-default comments, September 24, 2026. Compatible with CLI v0.1.1. MIT licensed. No credentials, private reports or production account identities are included.
