@@ -42,7 +42,7 @@ test('canonical links provide preview metadata and sandboxed JavaScript, raw sta
   const body = await res.text();
   assert.match(body,/property="og:title" content="Preview &amp; test"/);
   assert.match(body,/property="og:description" content="A &quot;shared&quot; report"/);
-  assert.match(body,/property="og:image" content="https:\/\/postplan.test\/d\/abcdefghijkl\/v\/1\/preview.png"/);
+  assert.match(body,/property="og:image" content="https:\/\/postplan.test\/d\/abcdefghijkl\/v\/1\/preview.png\?theme=1"/);
   assert.match(body,/id="review-toggle"/);
   assert.match(body,/sandbox="allow-scripts allow-popups allow-downloads"/);
   assert.doesNotMatch(body,/<script>document.body.dataset.ready="yes"<\/script>/);

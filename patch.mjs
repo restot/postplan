@@ -61,7 +61,7 @@ patch('src/api.js', [
       return res.type("html").send(withStorageBridge(html, draft.id));
     }
     const versionPath = '/d/' + draft.id + '/v/' + version.version_number;
-    const wrapper = renderStorageWrapper(html, draft, versionPath, Number(version.version_number), getHomeUrlForRequest(req) + versionPath + '/preview.png');
+    const wrapper = renderStorageWrapper(html, draft, versionPath, Number(version.version_number), getHomeUrlForRequest(req) + versionPath + '/preview.png?theme=1');
     res.setHeader("Content-Security-Policy", wrapper.csp);
     return res.type("html").send(wrapper.html);
   }`],

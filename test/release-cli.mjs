@@ -15,7 +15,7 @@ try {
   assert.equal(readFileSync(`${dir}/SHA256SUMS`,'utf8'),`${createHash('sha256').update(bytes).digest('hex')}  ${file}\n`);
   const entries=execFileSync('tar',['-tzf',`${dir}/${file}`],{encoding:'utf8'});
   for(const name of ['package/LICENSE','package/UPSTREAM-LICENSE','package/bin/postplan.js','package/node_modules/commander/LICENSE','package/node_modules/entities/LICENSE']) assert.ok(entries.includes(name),name);
-  assert.doesNotMatch(entries,/credentials|\.env|src\/server|src\/db\.js|test\/|\.git\/|resvg|fonts\/|preview\.js/);
+  assert.doesNotMatch(entries,/credentials|\.env|src\/server|src\/db\.js|test\/|\.git\/|resvg|fonts\/|preview\.js|node_modules\/(?:color|css-tree)\//);
   execFileSync('npm',['install','--global','--prefix',`${dir}/install`,'--offline','--ignore-scripts','--no-audit','--no-fund',`${dir}/${file}`],{env,stdio:'pipe'});
   const cli=`${dir}/install/bin/postplan`;
   assert.equal(execFileSync(cli,['--version'],{env,encoding:'utf8'}).trim(),version);

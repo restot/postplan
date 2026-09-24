@@ -51,7 +51,7 @@ The packaged CLI defaults to `https://postplan.restot.top`. Use `--api-url` when
 | See who commented | Comments include the author's account ID, display name, timestamp and reviewed version. |
 | Find the anchor | Picked elements stay outlined. Saved comments can scroll to the matching element or link to the older version. |
 | Read feedback with an agent | `postplan comments <draft-id> --json` applies the same author/owner/public visibility rules as the browser. |
-| Share link previews | Automatic 1200 × 630 PNG cards from report text. Canonical pages include version-pinned Open Graph and Twitter image metadata. Authored images stay intact. |
+| Share link previews | Automatic 1200 × 630 PNG summary cards with the report's colors. Canonical pages include version-pinned Open Graph and Twitter image metadata. Authored images stay intact. |
 | Use separate accounts | Shoo sign-in creates a separate account for each identity. The dashboard lists that account's drafts and versions. |
 | Manage CLI keys | Create and revoke personal API keys through the web UI. |
 | Use full draft IDs | New drafts use UUID v4 IDs. Existing short-ID links still work. |
@@ -139,9 +139,13 @@ The API is unavailable on `/raw` URLs. Reload the canonical page after navigatin
 
 Share the normal report URL. If the HTML has no `og:image`, Postplan generates a PNG from its title, description and first headings. It works for existing reports without another upload. A custom `og:image` takes precedence.
 
-The server reads at most the first 256 KiB of HTML for the card, escapes the extracted text into its own SVG template, and renders that template with resvg and bundled Noto Sans. It does not screenshot the page, execute its JavaScript, fetch its assets or include review comments. Dynamic content and the document's CSS layout are not reproduced. The bundled font does not cover every language or emoji.
+Cards keep the same summary layout and Noto Sans font, but inherit background, text, accent, muted-text and border colors from static inline CSS. The extractor reads `html`, `body`, `:root`, their matching simple class/ID selectors and inline styles. It respects source order, specificity and `!important`. Common tokens such as `--surface`, `--text`, `--primary`, `--muted` and `--line` work, including Material-prefixed equivalents and `var()` aliases/fallbacks. Link colors and `theme-color` can supply an accent.
 
-Image URLs use `/d/<id>/v/<version>/preview.png`. `/d/<id>/preview.png` resolves the latest version. Missing, deleted and disabled reports return 404, including on a warm cache. Responses use `no-store`; the process retains at most 32 generated cards. Old versions use their uploaded HTML text, with current draft metadata only as a fallback.
+Supported colors include hex, named colors, RGB and HSL. Alpha is composited into opaque colors, and unreadable text colors fall back to a contrasting color. Conditional rules, complex selectors, gradients, external stylesheets and script-selected themes are not evaluated. Unavailable colors use safe defaults, so this is theme extraction, not a full CSS rendering engine.
+
+The server reads at most the first 256 KiB of HTML and 64 KiB of style-block CSS for the card. Extracted text is escaped and colors are converted to hex before entering the server-owned SVG template, rendered with resvg. It does not screenshot the page, execute its JavaScript, fetch its assets or include review comments. Dynamic content and the document's CSS layout are not reproduced. The bundled font does not cover every language or emoji.
+
+Image URLs use `/d/<id>/v/<version>/preview.png?theme=1`. The query marks the themed renderer so image caches do not reuse the old fixed-palette card. `/d/<id>/preview.png` resolves the latest version. Missing, deleted and disabled reports return 404, including on a warm cache. Responses use `no-store`; the process retains at most 32 generated cards. Old versions use their uploaded HTML text and colors, with current draft metadata only as a text fallback.
 
 Slack and other services must be able to fetch both the report and its image without a proxy challenge or sign-in. They can retain their own cached previews after an update or deletion.
 

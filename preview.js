@@ -1,6 +1,8 @@
 import { parse, serialize } from 'parse5';
 import { Resvg } from '@resvg/resvg-js';
 import { fileURLToPath } from 'node:url';
+import { parse as parseCss } from 'css-tree';
+import Color from 'color';
 
 export function withPreviewMetadata(html, draft, previewUrl) {
   const document = parse(html);
@@ -33,6 +35,138 @@ const clean = (value, limit) => {
 };
 const escaped = value => value.replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;'}[char]));
 const excluded = new Set(['script', 'style', 'svg', 'template', 'noscript']);
+const defaultTheme = {background:'#14191c', text:'#f4f6f5', accent:'#b7efcf', muted:'#b9c3c4', border:'#374448'};
+const themeTokens = {
+  background:['--background', '--background-color', '--bg', '--bg-color', '--surface', '--md-surface', '--md-sys-color-surface'],
+  text:['--text', '--text-color', '--foreground', '--on-surface', '--md-on-surface', '--md-sys-color-on-surface'],
+  accent:['--accent', '--accent-color', '--primary', '--primary-color', '--md-primary', '--md-sys-color-primary'],
+  muted:['--muted', '--text-muted', '--text-secondary', '--on-surface-variant', '--md-on-surface-variant', '--md-sys-color-on-surface-variant'],
+  border:['--line', '--border', '--border-color', '--outline-variant', '--md-outline-variant', '--md-sys-color-outline-variant']
+};
+
+function colorHex(value, background = defaultTheme.background) {
+  if (typeof value !== 'string' || value.length > 512) return null;
+  try {
+    const color = Color(value.trim()).rgb(), alpha = color.alpha();
+    if (!alpha) return null;
+    const backdrop = Color(background).rgb().array();
+    return Color.rgb(color.array().slice(0, 3).map((channel, i) => channel * alpha + backdrop[i] * (1 - alpha))).hex().toLowerCase();
+  } catch { return null; }
+}
+
+function safeTheme(values = {}) {
+  const background = colorHex(values.background) || defaultTheme.background;
+  const contrast = color => Color(color).contrast(Color(background));
+  const readable = contrast('#14191c') > contrast('#f4f6f5') ? '#14191c' : '#f4f6f5';
+  const textColor = colorHex(values.text, background) || readable;
+  const text = contrast(textColor) >= 4.5 ? textColor : readable;
+  const accentColor = colorHex(values.accent, background) || defaultTheme.accent;
+  const mutedColor = colorHex(values.muted, background) || colorHex('rgba(' + Color(text).array().join(',') + ',.7)', background);
+  return {
+    background, text,
+    accent:contrast(accentColor) >= 3 ? accentColor : text,
+    muted:contrast(mutedColor) >= 3 ? mutedColor : text,
+    border:colorHex(values.border, background) || colorHex('rgba(' + Color(text).array().join(',') + ',.22)', background)
+  };
+}
+
+// Match only static compound selectors for document elements, not interactive states.
+function selectorRank(selector, element) {
+  const attrs = Object.fromEntries(element.attrs.map(attr => [attr.name, attr.value]));
+  const rank = [0, 0, 0];
+  for (const part of selector.children) {
+    if (part.type === 'TypeSelector' && part.name === '*') continue;
+    if (part.type === 'TypeSelector' && part.name.toLowerCase() === element.tagName) rank[2]++;
+    else if (part.type === 'IdSelector' && part.name === attrs.id) rank[0]++;
+    else if (part.type === 'ClassSelector' && (attrs.class || '').split(/\s+/).includes(part.name)) rank[1]++;
+    else if (part.type === 'PseudoClassSelector' && part.name === 'root' && element.tagName === 'html') rank[1]++;
+    else return null;
+  }
+  return rank;
+}
+
+function themeFromDocument(document) {
+  const html = document.childNodes.find(node => node.tagName === 'html');
+  const body = html.childNodes.find(node => node.tagName === 'body');
+  const targets = [html, body, {tagName:'a', attrs:[]}];
+  const styles = targets.map(() => new Map());
+  let budget = 64 * 1024, order = 0, themeColor;
+  const apply = (declarations, target, specificity, inline = 0) => {
+    for (const declaration of declarations) {
+      if (declaration.type !== 'Declaration') continue;
+      let property = declaration.property;
+      if (!property.startsWith('--')) property = property.toLowerCase();
+      if (property === 'background') property = 'background-color';
+      if (!property.startsWith('--') && !['background-color', 'color'].includes(property)) continue;
+      let value = declaration.value.value;
+      if (typeof value !== 'string' || value.length > 512) continue;
+      value = value.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, ' ').trim();
+      const important = declaration.important === true || String(declaration.important).toLowerCase() === 'important';
+      if (declaration.important && !important) continue;
+      const rank = [Number(important), inline, ...specificity, order++];
+      const old = styles[target].get(property);
+      const different = old ? rank.findIndex((part, i) => part !== old.rank[i]) : -1;
+      if (!old || (different >= 0 && rank[different] > old.rank[different])) styles[target].set(property, {value, rank});
+    }
+  };
+  const stack = [document];
+  while (stack.length) {
+    const node = stack.pop();
+    const attrs = Object.fromEntries((node.attrs || []).map(attr => [attr.name, attr.value]));
+    if (node.tagName === 'meta' && attrs.name?.toLowerCase() === 'theme-color' && !attrs.media) themeColor ||= attrs.content;
+    if (node.tagName === 'style' && budget > 0 && (!attrs.type || attrs.type === 'text/css') && (!attrs.media || ['all','screen'].includes(attrs.media))) {
+      const cssBytes = Buffer.from(node.childNodes[0]?.value || '').subarray(0, budget);
+      const css = cssBytes.toString('utf8');
+      budget -= cssBytes.length;
+      try {
+        const sheet = parseCss(css, {parseValue:false, parseAtrulePrelude:false});
+        for (const rule of sheet.children) {
+          // Ignore @media, @import, @supports, nested selectors and other conditional rules.
+          if (rule.type !== 'Rule' || rule.prelude?.type !== 'SelectorList') continue;
+          for (let target = 0; target < targets.length; target++) {
+            for (const selector of rule.prelude.children) {
+              const rank = selectorRank(selector, targets[target]);
+              if (rank) apply(rule.block.children, target, rank);
+            }
+          }
+        }
+      } catch { /* An invalid stylesheet must not break a public preview. */ }
+    }
+    if (excluded.has(node.tagName)) continue;
+    for (let i = (node.childNodes?.length || 0) - 1; i >= 0; i--) stack.push(node.childNodes[i]);
+  }
+  for (let target = 0; target < 2; target++) {
+    const inline = targets[target].attrs.find(attr => attr.name === 'style')?.value;
+    if (inline) {
+      try { apply(parseCss(inline.slice(0, 4096), {context:'declarationList', parseValue:false}).children, target, [0,0,0], 1); }
+      catch { /* Ignore malformed inline declarations. */ }
+    }
+  }
+  const resolve = (value, variables, depth = 0) => {
+    if (!value || depth > 12) return null;
+    const variable = value.trim().match(/^var\(\s*(--[\w-]+)\s*(?:,\s*([\s\S]*))?\)$/);
+    if (!variable) return value;
+    return resolve(variables.get(variable[1]), variables, depth + 1) || resolve(variable[2], variables, depth + 1);
+  };
+  // Custom properties are computed before inheritance, not re-resolved in the child scope.
+  const scopes = [];
+  for (let target = 0; target < targets.length; target++) {
+    const variables = new Map(scopes[target - 1]);
+    for (const [name, declaration] of styles[target]) if (name.startsWith('--')) variables.set(name, declaration.value);
+    scopes.push(new Map([...variables].map(([name, value]) => [name, resolve(value, variables)])));
+  }
+  const property = (target, name, background) => colorHex(resolve(styles[target].get(name)?.value, scopes[target]), background);
+  const token = (role, background) => themeTokens[role].map(name => colorHex(scopes[1].get(name), background)).find(Boolean);
+  const rootBackground = property(0, 'background-color');
+  const background = property(1, 'background-color', rootBackground || defaultTheme.background) || rootBackground || token('background') || defaultTheme.background;
+  return safeTheme({
+    background,
+    text:property(1, 'color', background) || property(0, 'color', background) || token('text', background),
+    accent:token('accent', background) || property(2, 'color', background) || colorHex(themeColor, background),
+    muted:token('muted', background),
+    border:token('border', background)
+  });
+}
 function textOf(node) {
   const parts = [], stack = [node];
   let length = 0;
@@ -68,7 +202,8 @@ export function previewCardData(html, draft, version) {
     title: clean(metadata['og:title'] || title || headings[0] || draft.title || 'Postplan report', 180),
     description: clean(metadata['og:description'] || metadata.description || draft.description || 'A shared document, ready for review.', 240),
     headings: headings.map(text => clean(text, 90)),
-    version: Number(version)
+    version: Number(version),
+    theme: themeFromDocument(document)
   };
 }
 
@@ -96,16 +231,17 @@ function lines(value, size, count) {
 }
 
 export function previewCardSvg(data) {
+  const theme = safeTheme(data.theme || defaultTheme);
   const text = (value, size, y, count, color) => lines(value, size, count).map((line, i) => `<text x="72" y="${y + i * (size + 12)}" font-size="${size}" fill="${color}">${escaped(line)}</text>`).join('');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-<rect width="1200" height="630" fill="#14191c"/><rect width="10" height="630" fill="#b7efcf"/>
-<g font-family="Noto Sans"><text x="72" y="77" font-size="22" letter-spacing="3" fill="#b7efcf">POSTPLAN / SHARED REPORT</text>
-${text(data.title, 48, 169, 3, '#f4f6f5')}
-${text(data.description, 25, 379, 2, '#b9c3c4')}
-<path d="M72 460H1128" stroke="#374448"/>
-${text((data.headings || []).slice(0, 3).map(value => clean(value, 90)).join(' · '), 21, 503, 1, '#b7efcf')}
-<text x="72" y="580" font-size="20" fill="#a5b1b4">Read the report. Join the review.</text>
-<text x="1128" y="580" text-anchor="end" font-size="20" fill="#a5b1b4">VERSION ${Number.isInteger(data.version) && data.version > 0 ? data.version : 1}</text></g></svg>`;
+<rect width="1200" height="630" fill="${theme.background}"/><rect width="10" height="630" fill="${theme.accent}"/>
+<g font-family="Noto Sans"><text x="72" y="77" font-size="22" letter-spacing="3" fill="${theme.accent}">POSTPLAN / SHARED REPORT</text>
+${text(data.title, 48, 169, 3, theme.text)}
+${text(data.description, 25, 379, 2, theme.muted)}
+<path d="M72 460H1128" stroke="${theme.border}"/>
+${text((data.headings || []).slice(0, 3).map(value => clean(value, 90)).join(' · '), 21, 503, 1, theme.accent)}
+<text x="72" y="580" font-size="20" fill="${theme.muted}">Read the report. Join the review.</text>
+<text x="1128" y="580" text-anchor="end" font-size="20" fill="${theme.muted}">VERSION ${Number.isInteger(data.version) && data.version > 0 ? data.version : 1}</text></g></svg>`;
 }
 
 export function renderPreviewPng(data) {

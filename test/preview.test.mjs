@@ -63,3 +63,60 @@ test('preview cache is bounded and mutable metadata fallback invalidates cached 
   for(let i=0;i<32;i++) await preview.getPreviewImage({...draft,id:`cache-${i}`},version,load);
   await preview.getPreviewImage(draft,version,load);assert.equal(reads,35);
 });
+
+const themeOf = html => preview.previewCardData(html, {}, 1).theme;
+test('summary cards inherit the onboarding Material colors through body CSS variables',()=>{
+  const theme=themeOf(`<style>:root{--surface:#141218;--text:#e6e0e9;--primary:#d0bcff;--muted:#cac4d0;--line:#49454f}body{background:var(--surface);color:var(--text)}a{color:var(--primary)}</style><h1>Guide</h1>`);
+  assert.deepEqual(theme,{background:'#141218',text:'#e6e0e9',accent:'#d0bcff',muted:'#cac4d0',border:'#49454f'});
+  const svg=preview.previewCardSvg({title:'Guide',version:1,theme});
+  assert.match(svg,/<rect width="1200" height="630" fill="#141218"/);
+  assert.match(svg,/fill="#d0bcff"/);assert.match(svg,/fill="#e6e0e9"/);
+  assert.doesNotMatch(svg,/#b7efcf|#14191c/);
+});
+test('Material-prefixed tokens, variable aliases and fallback values are resolved',()=>{
+  const theme=themeOf(`<style>:root{--md-surface:#141218;--md-on-surface:#e6e0e9;--md-primary:var(--brand);--brand:#d0bcff;--md-on-surface-variant:#cac4d0;--md-outline-variant:#49454f}body{background:var(--missing,var(--md-surface));color:var(--md-on-surface)}</style>`);
+  assert.deepEqual(theme,{background:'#141218',text:'#e6e0e9',accent:'#d0bcff',muted:'#cac4d0',border:'#49454f'});
+});
+test('CSS comments are ignored and inherited variables retain their computed root values',()=>{
+  assert.equal(themeOf('<style>body{background:#fff /* note */}</style>').background,'#ffffff');
+  assert.equal(themeOf('<style>:root{--bg:white;background:var(--bg)}body{--bg:black}</style>').background,'#ffffff');
+  assert.equal(themeOf('<style>:root{--a:white;--bg:var(--a)}body{--a:black;background:var(--bg)}</style>').background,'#ffffff');
+});
+test('static cascade respects importance, specificity, source order and inline body colors',()=>{
+  const theme=themeOf(`<html class="dark"><head><style>:root{--brand:blue}html.dark{--brand:purple}body{background:white;color:black}body.report{background:#eeeeee}body{background:yellow!important;color:red}body{color:green}a{color:var(--brand)}</style><style>body{color:navy}</style></head><body class="report" style="background:#fafafa;color:#222222"></body></html>`);
+  assert.equal(theme.background,'#ffff00');assert.equal(theme.text,'#222222');assert.equal(theme.accent,'#800080');
+  assert.equal(themeOf('<style>body.report{background:#eee}body{background:#fff}</style><body class="report">').background,'#eeeeee');
+  assert.equal(themeOf('<style>body{background:#fff}body{background:#eee}</style>').background,'#eeeeee');
+  assert.equal(themeOf('<style>body{background:white;background:black!IMPORTANT}</style>').background,'#000000');
+});
+test('light pages use readable text, supported color syntax and composited alpha',()=>{
+  const theme=themeOf('<style>html{background:white}body{background:rgba(255,0,0,.1);color:rgb(20 20 20);--accent:hsl(240 100% 25%);--muted:rgba(0,0,0,.7)}</style>');
+  assert.equal(theme.background,'#ffe6e6');assert.equal(theme.text,'#141414');assert.equal(theme.accent,'#000080');
+  assert.equal(themeOf('<style>body{background:white}</style>').text,'#14191c');
+});
+test('theme-color supplies a safe accent when no inline accent is available',()=>{
+  const theme=themeOf('<meta name="theme-color" content="#8b4513"><style>body{background:#fff;color:#111}</style>');
+  assert.equal(theme.accent,'#8b4513');
+});
+test('conditional and unrelated CSS cannot replace the static document palette',()=>{
+  const theme=themeOf(`<style>body{background:#fff;color:#111;--accent:navy}.card{background:red}body:hover{background:blue}@media print{body{background:black}}@media(prefers-color-scheme:dark){:root{--accent:red}}@supports(display:grid){body{background:green}}</style><style media="print">body{background:black}</style><div class="card"></div>`);
+  assert.equal(theme.background,'#ffffff');assert.equal(theme.text,'#111111');assert.equal(theme.accent,'#000080');
+});
+test('malformed, cyclic or external CSS falls back without injecting SVG or fetching assets',()=>{
+  const theme=themeOf(`<link rel="stylesheet" href="http://127.0.0.1/private"><style>@import url(file:///etc/passwd);:root{--accent:var(--cycle);--cycle:var(--accent);--muted:url(file:///etc/passwd)}body{background:url(http://127.0.0.1/private);color:expression(alert(1))}</style>`);
+  for(const color of Object.values(theme)) assert.match(color,/^#[0-9a-f]{6}$/);
+  const svg=preview.previewCardSvg({title:'Safe',theme:{background:'"/><image href="file:///etc/passwd"/>',text:'url(file:///etc/passwd)',accent:'url(https://example.test/image.svg)',muted:'var(--x)',border:'<script>'}});
+  assert.doesNotMatch(svg,/<image|<script|url\(|file:|example\.test|var\(/);
+  assert.doesNotThrow(()=>preview.renderPreviewPng({title:'Safe',theme}));
+  assert.doesNotThrow(()=>themeOf('<style>'+':is('.repeat(2000)+'</style>'));
+});
+test('CSS extraction is bounded and does not include styles outside the HTML prefix',()=>{
+  const theme=themeOf('<style>body{background:white;color:black}</style>'+' '.repeat(preview.PREVIEW_HTML_BYTES)+'<style>body{background:blue}</style>');
+  assert.equal(theme.background,'#ffffff');assert.equal(theme.text,'#000000');
+  const cssLimited=themeOf('<style>body{background:#111;color:#eee}/*'+'x'.repeat(64*1024)+'*/body{background:white}</style>');
+  assert.equal(cssLimited.background,'#111111');
+});
+test('the same card content renders differently for different report palettes',()=>{
+  const render=css=>preview.renderPreviewPng(preview.previewCardData(`<style>${css}</style><title>Same report</title>`,{},1));
+  assert.notDeepEqual(render('body{background:#141218;color:#e6e0e9;--accent:#d0bcff}'),render('body{background:#fff;color:#222;--accent:navy}'));
+});

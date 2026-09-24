@@ -98,7 +98,9 @@ Upload one self-contained HTML file. Inline CSS and embedded images travel with 
 
 Share the normal report URL in Slack. Postplan automatically generates a 1200 × 630 PNG card from the HTML title, description and headings. No screenshot or extra CLI option is needed, including for reports already uploaded. Give the HTML a useful `<title>` and `<meta name="description" content="...">`.
 
-Cards use a fixed design, not the page's layout. The server reads the first 256 KiB of HTML and does not run JavaScript, fetch page assets or include comments. If you supply `og:image`, that image is preserved instead. Slack must be able to fetch both the page and the image; an old message can retain its cached preview.
+Cards keep a fixed summary layout and font, but use the page's colors from static inline CSS. Body background/text colors and common theme variables such as `--surface`, `--text`, `--primary`, `--muted` and `--line` are supported. External stylesheets, gradients and script-selected themes are not evaluated; unsupported or unreadable colors use safe defaults.
+
+The server reads the first 256 KiB of HTML and does not run JavaScript, fetch page assets or include comments. If you supply `og:image`, that image is preserved instead. Slack must be able to fetch both the page and the image; an old message can retain its cached preview.
 
 ## A4 · Use the review features
 
