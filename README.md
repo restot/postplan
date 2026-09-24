@@ -4,6 +4,8 @@ Publish an HTML file, share the link, and collect comments on specific text or e
 
 This build patches the MIT-licensed `postplan@0.0.4` npm package by t3dotgg. It is a separate project from `@notsuhas/postplan`. The CLI release has its own version, starting at `0.1.0`.
 
+Start with the [onboarding guide](docs/onboarding.md) for installation, sign-in, publishing and a screenshot tour. The portable [post-report skill](skills/post-report/SKILL.md) lets Codex or Claude Code create and publish reports using your own Postplan account. Its installation steps are in the guide.
+
 ## Install the CLI
 
 You need Node.js 22 or newer and npm. Download `restot-postplan-0.1.1.tgz` and `SHA256SUMS` from this repository's Releases page.
