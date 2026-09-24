@@ -51,7 +51,7 @@ The packaged CLI defaults to `https://postplan.restot.top`. Use `--api-url` when
 | See who commented | Comments include the author's account ID, display name, timestamp and reviewed version. |
 | Find the anchor | Picked elements stay outlined. Saved comments can scroll to the matching element or link to the older version. |
 | Read feedback with an agent | `postplan comments <draft-id> --json` applies the same author/owner/public visibility rules as the browser. |
-| Share link previews | Canonical pages include missing Open Graph and Twitter-card metadata. Existing metadata stays intact. |
+| Share link previews | Automatic 1200 × 630 PNG cards from report text. Canonical pages include version-pinned Open Graph and Twitter image metadata. Authored images stay intact. |
 | Use separate accounts | Shoo sign-in creates a separate account for each identity. The dashboard lists that account's drafts and versions. |
 | Manage CLI keys | Create and revoke personal API keys through the web UI. |
 | Use full draft IDs | New drafts use UUID v4 IDs. Existing short-ID links still work. |
@@ -135,6 +135,16 @@ Keys are nonempty strings up to 256 characters. Values are strings. Encoded stor
 
 The API is unavailable on `/raw` URLs. Reload the canonical page after navigating the iframe to reconnect.
 
+## Automatic preview images
+
+Share the normal report URL. If the HTML has no `og:image`, Postplan generates a PNG from its title, description and first headings. It works for existing reports without another upload. A custom `og:image` takes precedence.
+
+The server reads at most the first 256 KiB of HTML for the card, escapes the extracted text into its own SVG template, and renders that template with resvg and bundled Noto Sans. It does not screenshot the page, execute its JavaScript, fetch its assets or include review comments. Dynamic content and the document's CSS layout are not reproduced. The bundled font does not cover every language or emoji.
+
+Image URLs use `/d/<id>/v/<version>/preview.png`. `/d/<id>/preview.png` resolves the latest version. Missing, deleted and disabled reports return 404, including on a warm cache. Responses use `no-store`; the process retains at most 32 generated cards. Old versions use their uploaded HTML text, with current draft metadata only as a fallback.
+
+Slack and other services must be able to fetch both the report and its image without a proxy challenge or sign-in. They can retain their own cached previews after an update or deletion.
+
 ## Isolation and limits
 
 Draft URLs are public. A UUID is not an access-control policy. Do not upload secrets or documents that require private sharing. Sign-in is open to Shoo users, not an invitation-only list of friends.
@@ -145,7 +155,7 @@ The parent uses a nonce-based CSP and a capability-bound MessageChannel. The fra
 
 Use this configuration with people you trust. Removing upload limits makes resource exhaustion easier. If you run a public service, set finite `MAX_HTML_BYTES`, `UPLOAD_BODY_LIMIT`, `UPLOAD_IP_RATE_LIMIT_MAX` and `UPLOAD_RATE_LIMIT_MAX` values. Limit resources at the deployment layer too. `UPLOAD_BODY_LIMIT` is a numeric byte count in this build.
 
-The origin's `/raw` response contains the uploaded bytes. A proxy can change the response. Cloudflare, for example, may inject a challenge script. The app supplies preview metadata, not screenshots, and third-party link previews depend on the receiving service.
+The origin's `/raw` response contains the uploaded bytes. A proxy can change the response. Cloudflare, for example, may inject a challenge script. Preview metadata and generated cards are separate from the original HTML.
 
 ## Run your own server
 
@@ -203,5 +213,7 @@ The PostgreSQL test creates fixtures. Run it only against a disposable database.
 ## License and source
 
 MIT. See [LICENSE](LICENSE) for these modifications and [UPSTREAM-LICENSE](UPSTREAM-LICENSE) for the original t3dotgg code. Bundled dependencies retain their own license files, including the BSD-2-Clause license for `entities`.
+
+The server's resvg-js renderer is MPL-2.0 and its Noto Sans font is OFL-1.1. See [font and renderer notices](fonts/README.md). Neither is included in the standalone CLI release.
 
 `package-lock.json` pins the upstream npm tarball and dependency versions. `npm ci` retrieves the upstream source, and `patch.mjs` applies this repository's changes. The review implementation is hand-written for this runtime and contains no code from the unrelated Workers application.

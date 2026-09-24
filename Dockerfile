@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY patch.mjs preview.js browser-storage.js review.js review-ui.js review-cli.js ./
 COPY LICENSE UPSTREAM-LICENSE ./
+COPY fonts ./fonts
 RUN node patch.mjs
 COPY test ./test
 RUN npm test

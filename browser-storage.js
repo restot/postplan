@@ -102,10 +102,10 @@ export function withStorageBridge(html,draftId) {
   return serialize(document);
 }
 
-export function renderStorageWrapper(html,draft,path,version=1) {
+export function renderStorageWrapper(html,draft,path,version=1,previewUrl) {
   const nonce=randomBytes(24).toString('base64');
   const capability=randomBytes(24).toString('hex');
-  const preview=headOf(parse(withPreviewMetadata(html,draft))).childNodes
+  const preview=headOf(parse(withPreviewMetadata(html,draft,previewUrl))).childNodes
     .filter(n=>n.tagName==='meta').map(n=>{
       const name=n.attrs.find(a=>a.name==='property'||a.name==='name')?.value;
       const content=n.attrs.find(a=>a.name==='content')?.value;

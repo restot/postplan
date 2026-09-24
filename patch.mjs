@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, copyFileSync, cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = new URL('./node_modules/postplan/', import.meta.url);
@@ -15,6 +15,13 @@ function patch(file, replacements) {
 }
 
 patch('src/config.js', [['Number(process.env.MAX_HTML_BYTES || 512 * 1024)', 'Number(process.env.MAX_HTML_BYTES || Infinity)']]);
+patch('src/storage.js', [
+  ['getHtmlObject(key)', 'getHtmlObject(key, maxBytes = Infinity)'],
+  ['streamToString(result.Body)', 'streamToString(result.Body, maxBytes)'],
+  ['streamToString(stream)', 'streamToString(stream, maxBytes)'],
+  ['  const chunks = [];', '  const chunks = [];\n  let bytes = 0;'],
+  ['    chunks.push(Buffer.from(chunk));', '    const part = Buffer.from(chunk).subarray(0, maxBytes - bytes);\n    chunks.push(part);\n    bytes += part.length;\n    if (bytes >= maxBytes) break;']
+]);
 patch('src/ids.js', [
   ['import { customAlphabet }', 'import { randomUUID } from "node:crypto";\nimport { customAlphabet }'],
   ['const draftId = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 12);\n', ''],
@@ -42,7 +49,7 @@ patch('src/html-policy.js', [
 ]);
 patch('src/api.js', [
   ['pool, publicUploadAuth, withTransaction', 'pool, withTransaction'],
-  ['import express from "express";', 'import express from "express";\nimport { registerReviewRoutes } from "./review.js";\nimport { renderStorageWrapper, withStorageBridge } from "./browser-storage.js";'],
+  ['import express from "express";', 'import express from "express";\nimport { getPreviewImage } from "./preview.js";\nimport { registerReviewRoutes } from "./review.js";\nimport { renderStorageWrapper, withStorageBridge } from "./browser-storage.js";'],
   ['registerWebRoutes(app);', 'registerReviewRoutes(app);\n  registerWebRoutes(app);'],
   ['app.use("/api", express.json({ limit: process.env.UPLOAD_BODY_LIMIT || "2mb" }));', 'app.use("/api", requireAuth, express.json({ limit: Number(process.env.UPLOAD_BODY_LIMIT || Infinity) }));'],
   ['"/api/uploads", uploadIpRateLimit, optionalUploadAuth, uploadKeyRateLimit', '"/api/uploads", uploadIpRateLimit, uploadKeyRateLimit'],
@@ -53,7 +60,8 @@ patch('src/api.js', [
     if (req.query["postplan-frame"] === "1") {
       return res.type("html").send(withStorageBridge(html, draft.id));
     }
-    const wrapper = renderStorageWrapper(html, draft, '/d/' + draft.id + '/v/' + version.version_number, Number(version.version_number));
+    const versionPath = '/d/' + draft.id + '/v/' + version.version_number;
+    const wrapper = renderStorageWrapper(html, draft, versionPath, Number(version.version_number), getHomeUrlForRequest(req) + versionPath + '/preview.png');
     res.setHeader("Content-Security-Policy", wrapper.csp);
     return res.type("html").send(wrapper.html);
   }`],
@@ -61,9 +69,21 @@ patch('src/api.js', [
   ['"style-src \'unsafe-inline\'",', '"style-src \'unsafe-inline\' https:",\n    "font-src https: data:",'],
   ['// blocking script execution, cross-origin network requests, and form posts.\n// Uploaded drafts are already external-script/-form/-iframe free (see\n// validateHtml) and live on isolated per-draft origins.', '// allowing scripts in an opaque origin, without storage, API fetches or forms.'],
   ['process.env.UPLOAD_IP_RATE_LIMIT_MAX || 60', 'process.env.UPLOAD_IP_RATE_LIMIT_MAX || Infinity'],
-  ['process.env.UPLOAD_RATE_LIMIT_MAX || 30', 'process.env.UPLOAD_RATE_LIMIT_MAX || Infinity']
+  ['process.env.UPLOAD_RATE_LIMIT_MAX || 30', 'process.env.UPLOAD_RATE_LIMIT_MAX || Infinity'],
+  ['registerReviewRoutes(app);', `app.get(['/d/:draftId/preview.png', '/d/:draftId/v/:versionNumber/preview.png'], async (req, res) => {
+    const versionNumber = req.params.versionNumber === undefined ? undefined : Number(req.params.versionNumber);
+    if (versionNumber !== undefined && (!Number.isInteger(versionNumber) || versionNumber < 1 || versionNumber > 2147483647)) return res.sendStatus(404);
+    const result = await findPublicDraftVersion(req.params.draftId, versionNumber);
+    if (!result.draft || !result.version) return res.sendStatus(404);
+    // Check public access before every cache lookup, including old versions.
+    const png = await getPreviewImage(result.draft, result.version, getHtmlObject);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.type('png').send(png);
+  });
+  registerReviewRoutes(app);`]
 ]);
 copyFileSync(new URL('./preview.js', import.meta.url), new URL('src/preview.js', root));
+cpSync(new URL('./fonts/', import.meta.url), new URL('src/fonts/', root), {recursive:true});
 copyFileSync(new URL('./browser-storage.js', import.meta.url), new URL('src/browser-storage.js', root));
 for (const file of ['review.js', 'review-ui.js', 'review-cli.js']) copyFileSync(new URL('./'+file, import.meta.url), new URL('src/'+file, root));
 console.log(`Patched Postplan ${pkg.version} in ${fileURLToPath(root)}`);

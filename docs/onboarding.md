@@ -94,6 +94,12 @@ Upload one self-contained HTML file. Inline CSS and embedded images travel with 
 
 **Anyone with the link can read the report without signing in.** Do not upload secrets or documents that require private sharing. The CLI also sends file hashes and available Git/CI metadata with uploads. Open source does not make uploaded content private.
 
+### Link preview images
+
+Share the normal report URL in Slack. Postplan automatically generates a 1200 × 630 PNG card from the HTML title, description and headings. No screenshot or extra CLI option is needed, including for reports already uploaded. Give the HTML a useful `<title>` and `<meta name="description" content="...">`.
+
+Cards use a fixed design, not the page's layout. The server reads the first 256 KiB of HTML and does not run JavaScript, fetch page assets or include comments. If you supply `og:image`, that image is preserved instead. Slack must be able to fetch both the page and the image; an old message can retain its cached preview.
+
 ## A4 · Use the review features
 
 The screenshots below show the real application running locally with a sample report and a fictional reviewer. They are not private user plans. The sample checklist and export button belong to the uploaded HTML, not to Postplan's built-in interface.
@@ -257,8 +263,8 @@ The skill runs `postplan` on PATH, using your configured account. It does not cr
 | Comments say Not signed in | Complete browser sign-in, return to the shared page and press Refresh. |
 | A moved file creates a new URL | Use `--draft <draft-id>` to target the existing draft. |
 | Picks disappear | Use the same browser/profile and canonical URL. The report must implement the storage API. |
-| Slack does not show a preview | The canonical page has text metadata, not an automatic screenshot. Crawlers must be able to fetch it; proxy bot protection can block them. |
+| Slack does not show a preview | The page has text metadata and an automatic PNG card unless you supplied `og:image`. Crawlers must be able to fetch both URLs; proxy bot protection and cached previews can prevent an update. |
 
 The app removes the former upload caps, but proxy limits and server capacity still apply. Keep a local copy of your reports. For your own deployment, see the server configuration and isolation notes in the [README](https://github.com/restot/postplan#run-your-own-server).
 
-Guide and screenshots updated for private-by-default comments, September 24, 2026. Compatible with CLI v0.1.1. MIT licensed. No credentials, private reports or production account identities are included.
+Guide updated for private-by-default comments and automatic preview cards, September 24, 2026. Compatible with CLI v0.1.1. MIT licensed. No credentials, private reports or production account identities are included.
