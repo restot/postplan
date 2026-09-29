@@ -46,18 +46,15 @@ function hostBridge(draftId, capability, frameUrl, operate, mount, version) {
       catch(error) { port.postMessage({id:data.id,error:error.name==='QuotaExceededError'?'Browser storage is full':error.message}); }
     };
     port.postMessage({ready:true});
-    // A navigated document must never inherit the previous document's storage port.
-    let initialLoad=true;
-    frame.addEventListener('load',()=>{
-      if(initialLoad) initialLoad=false;
-      else {port.close();reviewPort=null;}
-    });
   });
   frame.src=frameUrl+'#'+capability;
 }
 
 function childBridge(draftId, review) {
   const channel=new MessageChannel();
+  // WebKit can fire iframe load on same-document fragment jumps. Revoke only
+  // when this document leaves; a replacement document cannot reconnect above.
+  window.addEventListener('pagehide',()=>channel.port1.close(),{once:true});
   review(channel.port1);
   const pending=new Map();
   let sequence=0;

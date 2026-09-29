@@ -209,10 +209,11 @@ The release test checks the archive, required licenses, checksum, offline global
 
 ```sh
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs CHROMIUM_PATH=/path/to/chromium node test/review-browser.mjs
+REVIEW_BROWSER=webkit PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/review-browser.mjs
 REVIEW_TEST_DATABASE_URL=postgres://user:password@localhost/disposable_db node test/review-postgres.mjs
 ```
 
-The PostgreSQL test creates fixtures. Run it only against a disposable database. Browser checks cover desktop and mobile-sized Chromium. Native iOS Safari and Windows CLI installation have not been tested.
+The PostgreSQL test creates fixtures. Run it only against a disposable database. Browser checks cover desktop and mobile-sized Chromium and Playwright WebKit, including saving text/element comments after section jumps. Install the matching Playwright WebKit browser before running that variant. Native iOS Safari and Windows CLI installation have not been tested.
 
 ## License and source
 

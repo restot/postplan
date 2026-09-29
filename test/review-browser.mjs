@@ -13,9 +13,9 @@ const {pool}=await import('../node_modules/postplan/src/db.js');
 const {config}=await import('../node_modules/postplan/src/config.js');
 const {createSessionCookie}=await import('../node_modules/postplan/src/web-auth.js');
 const {S3Client}=await import('@aws-sdk/client-s3');
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
+const {chromium,webkit}=await import(process.env.PLAYWRIGHT_MODULE);
 const comments=[];
-const html='<title>Review fixture</title><body><h1>Hello world</h1><p>Nearby context</p><script>window.untrusted=true</script></body>';
+const html='<title>Review fixture</title><body><a href="#section">Jump to section</a><h1 id="section">Hello world</h1><p>Nearby context</p><script>window.untrusted=true</script></body>';
 mock.method(pool,'query',async(sql,args)=>{
   if(sql.includes('AS current')) return {rows:[{version:2,created_at:'2026-09-20T00:00:00Z',current:true},{version:1,created_at:'2026-09-19T00:00:00Z',current:false}]};
   if(sql.includes('api_keys')) return {rows:[{id:'key',account_id:'owner'}]};
@@ -35,7 +35,7 @@ mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield B
 const server=createApp().listen(0,'127.0.0.1');
 await new Promise(r=>server.once('listening',r));
 const base=`http://127.0.0.1:${server.address().port}`;config.publicBaseUrl=base;
-const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});
+const browser=await (process.env.REVIEW_BROWSER==='webkit'?webkit:chromium).launch({headless:true,...(process.env.REVIEW_BROWSER==='webkit'?{}:{executablePath:process.env.CHROMIUM_PATH})});
 try {
   for(const mobile of [false,true]) {
     comments.length=0;
@@ -51,12 +51,19 @@ try {
     assert.equal(await page.locator('#review-submit').isEnabled(),true);
     let frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
     await frame.waitForFunction(()=>window.postplan);
+    await frame.locator('a[href="#section"]').click();
+    await frame.waitForFunction(()=>location.hash==='#section');
+    // WebKit emits extra iframe load events on fragment jumps on the proxied site.
+    await page.locator('#postplan-frame').evaluate(frame=>{frame.dispatchEvent(new Event('load'));frame.dispatchEvent(new Event('load'));});
+    await frame.evaluate(()=>{location.hash='#another-section';});
+    await frame.waitForFunction(()=>location.hash==='#another-section');
+    await frame.locator('a[href="#section"]').click();
     assert.equal(await page.evaluate(()=>window.untrusted),undefined);
     await frame.evaluate(()=>{
       const range=document.createRange();range.setStart(document.querySelector('h1').firstChild,0);range.setEnd(document.querySelector('h1').firstChild,5);
       const s=getSelection();s.removeAllRanges();s.addRange(range);document.dispatchEvent(new Event('keyup'));
     });
-    await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Hello'));
+    await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Hello'),null,{timeout:3000});
     await page.locator('#review-body').fill('Please rename <script>alert(1)</script>');
     await page.locator('#review-submit').click();
     await page.locator('#review-list article').waitFor();
@@ -73,6 +80,8 @@ try {
     frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());
     await page.locator('#review-list article button:not([data-publish])').click();
     await frame.waitForFunction(()=>document.querySelector('h1').style.outline.includes('3px'));
+    await frame.locator('a[href="#section"]').click();
+    await page.locator('#postplan-frame').evaluate(frame=>frame.dispatchEvent(new Event('load')));
     await page.locator('#review-pick').click();await frame.locator('p').click();
     await page.waitForFunction(()=>document.querySelector('#review-anchor').textContent.includes('Nearby context'));
     assert.match(await frame.locator('p').evaluate(e=>e.style.outline),/3px/);
@@ -128,5 +137,5 @@ try {
     await page.waitForFunction(()=>document.querySelector('#review-version').value==='1');
     await context.close();
   }
-  console.log('PASS: desktop/mobile private comments, author-only publish confirmation, public signed-out reads, owner/CLI visibility, version navigation, anchors and XSS isolation');
+  console.log('PASS: desktop/mobile private comments, author-only publish confirmation, public signed-out reads, owner/CLI visibility, version navigation, text/element anchors after fragment jumps and XSS isolation');
 } finally {await browser.close();mock.restoreAll();await new Promise(r=>server.close(r));await pool.end();}
