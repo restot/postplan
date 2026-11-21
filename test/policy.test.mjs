@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateHtml } from '../node_modules/postplan/src/html-policy.js';
 import { config } from '../node_modules/postplan/src/config.js';
+import sourceMap from 'source-map-js';
 
 test('server and CLI default to no application HTML size cap', () => {
   assert.equal(config.maxHtmlBytes, Infinity);
@@ -28,4 +29,25 @@ test('accepts crawler-readable Open Graph metadata unchanged', () => {
   const result = validateHtml('<title>Preview</title><meta property="og:title" content="Preview"><meta property="og:description" content="Shared report"><meta property="og:image" content="https://example.com/preview.png">');
   assert.equal(result.ok, true);
   assert.equal(result.title, 'Preview');
+});
+
+test('source-map dependency rejects malicious indexed offsets before processing mappings', () => {
+  const section = (line, map = {version:3,sources:['input.js'],names:[],mappings:'AAAA'}) =>
+    ({version:3,sections:[{offset:{line,column:0},map}]});
+  for (const line of [10_000_001, Infinity, NaN, -1, 1.5, '4']) {
+    assert.throws(() => new sourceMap.SourceMapConsumer(section(line)), /Section offset/);
+  }
+  assert.throws(() => new sourceMap.SourceMapConsumer(section(6_000_000,section(6_000_000))), /Section offset/);
+});
+
+test('source-map dependency preserves valid indexed mappings', () => {
+  const consumer = new sourceMap.SourceMapConsumer({version:3,sections:[{
+    offset:{line:12,column:0},map:{version:3,sources:['input.js'],names:[],mappings:'AAAA'}
+  }]});
+  const mappings=[];
+  consumer.eachMapping(mapping => mappings.push(mapping));
+  assert.equal(mappings.length,1);
+  assert.equal(mappings[0].generatedLine,13);
+  assert.equal(mappings[0].source,'input.js');
+  assert.equal(mappings[0].originalLine,1);
 });

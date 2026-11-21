@@ -6,6 +6,42 @@ This guide uses **Restot Postplan CLI v0.1.1** and **https://postplan.restot.top
 
 [Source and README](https://github.com/restot/postplan) · [Download v0.1.1](https://github.com/restot/postplan/releases/tag/v0.1.1) · [Shared post-report skill](../skills/post-report/SKILL.md)
 
+## Use Grok on iPhone without installing the CLI
+
+Grok can use Postplan through its remote MCP connector. These steps do not
+require Node.js, npm, an API key, or access to a computer terminal.
+
+1. Open Grok's Settings → Connectors. Add a custom connector with server URL
+   `https://postplan.restot.top/mcp` and OAuth authentication. If custom setup is
+   not shown in your app version, use [grok.com/connectors](https://grok.com/connectors)
+   in a browser while signed in to the same Grok account.
+2. Sign in to Postplan when its browser page opens. Check the account, client
+   name and return URL. Client names are supplied by the connector and are not
+   verified by Postplan. Approve only the connection you initiated.
+3. Return to Grok and enable Postplan for the conversation. Ask it to read the
+   Postplan report skill and publish the report content from your conversation.
+   Grok sends the HTML through `publish_report`; it does not need a local file.
+4. Keep the returned report ID to request updates. Updating that ID publishes
+   a new version at the same URL. Ask Grok to list your reports if needed.
+
+The full skill includes the same dark Material 3 style and sharing/privacy
+rules as the CLI skill, with MCP tool instructions instead of shell commands.
+The tools also read your reports and comments visible to your account. Reading
+feedback does not authorize editing or publication. Unpublishing requires your
+explicit confirmation and the report's exact current title.
+
+Reports remain public to anyone with the link. Private comments remain visible
+only to their author and report owner, including authorized agents. Never ask
+Grok to include private feedback in a public report unless you intend to share it.
+
+To disconnect, sign in to [Postplan key management](https://postplan.restot.top/cli/auth)
+and revoke the `MCP: ...` entry. Revocation takes effect immediately. Removing a
+connector in Grok alone may not revoke its Postplan tokens.
+
+xAI documents [iOS connectors and Bring Your Own MCP](https://x.ai/news/grok-connectors).
+Actual Grok iOS account connection and publication remain unverified until you
+complete this flow. The server's OAuth and tools are tested with the MCP SDK.
+
 ## A1 · Install the CLI
 
 These commands are for macOS or Linux. Check your prerequisites:

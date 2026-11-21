@@ -82,6 +82,18 @@ patch('src/api.js', [
   });
   registerReviewRoutes(app);`]
 ]);
+patch('src/server.js', [
+  ['import { initReviewDb }', 'import { initMcpDb } from "./mcp-auth.js";\nimport { initReviewDb }'],
+  ['await initReviewDb();', 'await initReviewDb();\n  await initMcpDb();']
+]);
+patch('src/api.js', [
+  ['import express from "express";', 'import express from "express";\nimport { registerMcpRoutes } from "./mcp.js";'],
+  ['app.post("/api/uploads", uploadIpRateLimit, uploadKeyRateLimit, async (req, res, next) => {', 'const uploadReport = async (req, res, next) => {'],
+  ['  });\n\n  app.delete("/api/drafts/:draftId",', '  };\n  app.post("/api/uploads", uploadIpRateLimit, uploadKeyRateLimit, uploadReport);\n\n  app.delete("/api/drafts/:draftId",'],
+  ['  registerReviewRoutes(app);', '  const { listComments } = registerReviewRoutes(app);\n  registerMcpRoutes(app, { uploadReport, listComments });']
+]);
+copyFileSync(new URL('./skills/post-report/MCP.md', import.meta.url), new URL('src/post-report-mcp.md', root));
+for (const file of ['mcp.js', 'mcp-auth.js']) copyFileSync(new URL('./'+file, import.meta.url), new URL('src/'+file, root));
 copyFileSync(new URL('./preview.js', import.meta.url), new URL('src/preview.js', root));
 cpSync(new URL('./fonts/', import.meta.url), new URL('src/fonts/', root), {recursive:true});
 copyFileSync(new URL('./browser-storage.js', import.meta.url), new URL('src/browser-storage.js', root));

@@ -6,6 +6,67 @@ This build patches the MIT-licensed `postplan@0.0.4` npm package by t3dotgg. It 
 
 Start with the [onboarding guide](docs/onboarding.md) for installation, sign-in, publishing and a screenshot tour. The portable [post-report skill](skills/post-report/SKILL.md) lets Codex or Claude Code create and publish reports using your own Postplan account. Its installation steps are in the guide.
 
+## Connect Grok on iOS without a CLI
+
+Add `https://postplan.restot.top/mcp` as a custom MCP connector in Grok. Use OAuth,
+sign in to Postplan in the browser, and approve the connection. You do not need
+an xAI API key, a Postplan CLI key, or terminal access. If your mobile app does
+not offer custom setup, add it at [Grok connectors](https://grok.com/connectors)
+using the same Grok account, then check Settings → Connectors in the iOS app.
+
+For Claude, use the same MCP URL with **Sign in now** and **Register
+automatically**. Leave request headers empty. Postplan accepts the exact
+`https://claude.ai` transport origin; consent approval still requires Postplan's
+own origin. See [Claude's custom connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
+Ask Grok: "Read the Postplan report skill, then publish this report."
+The server exposes `get_report_skill`, `list_reports`, `get_report`,
+`list_comments`, `publish_report`, and `unpublish_report`. Report-writing
+instructions are also available as the `post-report` MCP prompt and
+`postplan://skills/post-report` resource. Clients that only support tools can
+still read the full skill. This shares Postplan's workflow, not arbitrary local
+skills, files, credentials, or shell commands.
+
+`publish_report` accepts complete HTML text. A `draftId` adds a version at the
+existing URL; omitting it creates a new report. MCP has no local-path mapping.
+Unpublishing requires the current title and explicit user confirmation. Reports
+are public to anyone with the link. Private comments keep the existing
+author/owner visibility rules and cannot be published through MCP.
+
+Connections appear as `MCP: <client name>` at `/cli/auth`. Revoke one there to
+invalidate its access and refresh tokens immediately. Access lasts one hour;
+refresh tokens rotate and last 30 days from each use. Reusing an old refresh
+token revokes that connection. Removing a connector in Grok may not revoke it
+at Postplan, so use Postplan's revocation page when disconnecting.
+
+The transport is stateless Streamable HTTP with JSON responses at `/mcp`.
+OAuth discovery, dynamic registration, S256 PKCE, explicit account-bound
+consent, refresh rotation and revocation use MCP SDK 1.32.1. Codes expire after
+two minutes. Codes and bearer tokens are hashed in PostgreSQL; confidential
+client secrets are encrypted with the existing session secret. Rotating that
+secret requires confidential clients to reconnect. MCP tokens cannot call the
+unrestricted REST API and no downstream API token is exposed or forwarded.
+Without `POSTPLAN_PUBLIC_BASE_URL` and `POSTPLAN_SESSION_SECRET`, MCP routes
+stay disabled. Startup adds three MCP tables without rewriting existing data.
+OAuth endpoints have abuse limits independent of report upload limits.
+
+[xAI documents iOS connectors and custom MCP support](https://x.ai/news/grok-connectors).
+Its [custom connector instructions](https://docs.x.ai/grok/connectors) specify a
+public server URL and authentication. A real Grok iOS sign-in and publication
+still need user verification; SDK compatibility tests are not a mobile-app test.
+
+MCP verification uses `npm test` plus `node test/mcp-postgres.mjs` with
+`MCP_TEST_DATABASE_URL` pointing at a disposable PostgreSQL database. Never run
+the latter against a user's Postplan database. It creates fixture accounts and
+reports and mocks object storage at the S3 boundary. The existing
+`test/review-postgres.mjs` checks comment privacy independently. The CLI release
+test still verifies that server/MCP dependencies do not enter the CLI archive.
+
+The lockfile uses `source-map-js` 1.2.2 through `css-tree`, fixing
+[GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
+Regression tests reject malicious indexed offsets and preserve valid mappings.
+`npm audit --omit=dev` reports zero vulnerabilities as of 2026-10-17.
+
 ## Install the CLI
 
 You need Node.js 22 or newer and npm. Download `restot-postplan-0.1.1.tgz` and `SHA256SUMS` from this repository's Releases page.

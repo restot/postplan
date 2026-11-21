@@ -96,4 +96,5 @@ export function registerReviewRoutes(app) {
       res.json(result.rows[0]);
     } catch(error) { next(error); }
   });
+  return {listComments:list};
 }
