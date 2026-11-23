@@ -32,7 +32,7 @@ test('authenticated requests exceed the former JSON limit', async () => {
 
 test('canonical links provide preview metadata and sandboxed JavaScript, raw stays exact', async () => {
   const html = '<!doctype html><html><head><title>Preview &amp; test</title></head><body><script>document.body.dataset.ready="yes"</script></body></html>';
-  mock.method(pool, 'query', async sql => ({ rows: sql.includes('FROM drafts') ? [{id:'abcdefghijkl',current_version_id:'v1',title:'Preview & test',description:'A "shared" report'}] : [{version_number:1,object_key:'test'}] }));
+  mock.method(pool, 'query', async () => ({ rows: [{id:'abcdefghijkl',account_id:'owner',current_version_id:'v1',title:'Preview & test',description:'A "shared" report',allowed_access:[],version_id:'v1',version_number:1,object_key:'test',content_hash:'h1'}] }));
   mock.method(S3Client.prototype, 'send', async () => ({Body: (async function*(){yield Buffer.from(html);})()}));
   const res = await fetch(`${base}/d/abcdefghijkl`, {headers:{'User-Agent':'Slackbot-LinkExpanding 1.0'}});
   assert.equal(res.status,200);
@@ -53,12 +53,10 @@ test('public version previews return PNG, cache only after active-draft checks, 
   let available=true,reads=0;
   mock.method(pool,'query',async(sql,args)=>{
     assert.doesNotMatch(sql,/review_comments|accounts|api_keys/);
-    if(sql.includes('FROM drafts')) {
-      assert.match(sql,/deleted_at IS NULL/);assert.match(sql,/disabled_at IS NULL/);
-      return {rows:available?[{id:'previewtest1',current_version_id:'preview-v2',title:'A report'}]:[]};
-    }
+    assert.match(sql,/deleted_at IS NULL/);assert.match(sql,/disabled_at IS NULL/);
+    if(!available) return {rows:[]};
     const v=args[1]||2;
-    return {rows:[{id:`preview-v${v}`,version_number:v,object_key:`preview-${v}`,content_hash:`hash-${v}`} ]};
+    return {rows:[{id:'previewtest1',account_id:'owner',current_version_id:'preview-v2',title:'A report',allowed_access:[],version_id:`preview-v${v}`,version_number:v,object_key:`preview-${v}`,content_hash:`hash-${v}`}]};
   });
   mock.method(S3Client.prototype,'send',async command=>{reads++;return {Body:(async function*(){yield Buffer.from(`<title>Version ${command.input.Key}</title><meta name="description" content="Programmatic image"><h2>Review notes</h2>`);})()};});
   const current=await fetch(`${base}/d/previewtest1/preview.png`);
@@ -75,7 +73,7 @@ test('preview routes reject invalid or missing versions before rendering',async(
   mock.method(pool,'query',async()=>({rows:[]}));
   for(const version of ['0','-1','abc','2147483648','1.5']) assert.equal((await fetch(`${base}/d/abcdefghijkl/v/${version}/preview.png`)).status,404);
   assert.equal((await fetch(`${base}/d/missing/preview.png`)).status,404);
-  mock.method(pool,'query',async sql=>({rows:sql.includes('FROM drafts')?[{id:'abcdefghijkl',current_version_id:'missing'}]:[]}));
+  mock.method(pool,'query',async()=>({rows:[{id:'abcdefghijkl',account_id:'owner',current_version_id:'missing',allowed_access:[],version_id:null,version_number:null,object_key:null,content_hash:null}]}));
   assert.equal((await fetch(`${base}/d/abcdefghijkl/v/42/preview.png`)).status,404);
 });
 test('preview HTML reads stop at the prefix limit without limiting normal raw reads',async()=>{
@@ -88,7 +86,7 @@ test('preview HTML reads stop at the prefix limit without limiting normal raw re
 
 test('opt-in wrapper keeps untrusted code in a sandboxed frame and raw bytes unchanged', async () => {
   const html='<meta name="postplan-storage" content="browser"><title>Picks</title><script>globalThis.untrustedMarker=true</script>';
-  mock.method(pool,'query',async sql=>({rows:sql.includes('FROM drafts')?[{id:'abcdefghijkl',current_version_id:'v1',title:'Picks'}]:[{version_number:1,object_key:'test'}]}));
+  mock.method(pool,'query',async()=>({rows:[{id:'abcdefghijkl',account_id:'owner',current_version_id:'v1',title:'Picks',allowed_access:[],version_id:'v1',version_number:1,object_key:'test',content_hash:'h1'}]}));
   mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield Buffer.from(html);})()}));
   const res=await fetch(`${base}/d/abcdefghijkl`);
   assert.equal(res.status,200);

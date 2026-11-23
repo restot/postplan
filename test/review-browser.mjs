@@ -28,7 +28,7 @@ mock.method(pool,'query',async(sql,args)=>{
     if(!c) return {rows:[]};c.published_at||=new Date().toISOString();return {rows:[{id:c.id,published_at:c.published_at}]};
   }
   if(sql.includes('FROM review_comments')) return {rows:comments.filter(c=>c.published_at||c.author_id===args[2]||args[3]).slice(args[1],args[1]+100).map(c=>({...c,can_publish:c.author_id===args[2]&&!c.published_at}))};
-  if(sql.includes('FROM drafts')) return {rows:[{id:args[0],account_id:'owner',current_version_id:'v1',title:'Review fixture'}]};
+  if(sql.includes('FROM drafts')) return {rows:[{id:args[0],account_id:'owner',current_version_id:'v1',title:'Review fixture',allowed_access:[],version_id:'v1',version_number:args?.[1]||1,object_key:'test',content_hash:'h1'}]};
   return {rows:[{id:'v1',version_number:args?.[1]||1,object_key:'test'}]};
 });
 mock.method(S3Client.prototype,'send',async()=>({Body:(async function*(){yield Buffer.from(html);})()}));
@@ -45,8 +45,24 @@ try {
     const page=await context.newPage();
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.goto(base+'/d/abcdefghijkl');
+    const closedFrame=await page.locator('#postplan-frame').boundingBox();
+    assert.equal(closedFrame.width,mobile?390:1280);
+    await page.locator('#review-toggle').focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>document.activeElement?.id==='review-close');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>document.activeElement?.id==='review-toggle' && document.querySelector('#review-panel').hidden);
     await page.locator('#review-toggle').click();
     await page.waitForFunction(()=>document.querySelector('#review-identity')?.textContent.startsWith('Signed in as Friend'));
+    const openFrame=await page.locator('#postplan-frame').boundingBox();
+    const openPanel=await page.locator('#review-panel').boundingBox();
+    if(mobile) {
+      assert.ok(openFrame.y+openFrame.height<=openPanel.y+1,`Expected iframe above mobile panel: ${JSON.stringify({openFrame,openPanel})}`);
+    } else {
+      assert.ok(openFrame.width<1280,`Expected desktop iframe to shrink left: ${JSON.stringify(openFrame)}`);
+      assert.ok(openFrame.x+openFrame.width<=openPanel.x+1,`Expected zero horizontal overlap: ${JSON.stringify({openFrame,openPanel})}`);
+    }
+    assert.equal(await page.locator('#review-access').isVisible(),false);
     assert.equal(await page.locator('#review-sign-in').isVisible(),false);
     assert.equal(await page.locator('#review-submit').isEnabled(),true);
     let frame=await page.locator('iframe').elementHandle().then(e=>e.contentFrame());

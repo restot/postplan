@@ -6,6 +6,7 @@ process.env.DATABASE_URL=process.env.REVIEW_TEST_DATABASE_URL;
 process.env.POSTPLAN_SESSION_SECRET='postgres-test-only';
 const {pool,initDb}=await import('../node_modules/postplan/src/db.js');
 const {initReviewDb}=await import('../node_modules/postplan/src/review.js');
+const {initAccessDb}=await import('../node_modules/postplan/src/access.js');
 const {createApp}=await import('../node_modules/postplan/src/api.js');
 const {config}=await import('../node_modules/postplan/src/config.js');
 const {createSessionCookie}=await import('../node_modules/postplan/src/web-auth.js');
@@ -27,6 +28,7 @@ try {
   const legacyId=randomUUID(),anchor={type:'text',quote:'Hello',selector:'h1',prefix:'',suffix:' world'};
   await pool.query('INSERT INTO review_comments(id,draft_id,version_id,author_id,author_name,body,anchor) VALUES($1,$2,$3,$4,$5,$6,$7)',[legacyId,draft,versionId,friend,'Friend','Existing comment',anchor]);
   await initReviewDb();await initReviewDb();
+  await initAccessDb();await initAccessDb();
   assert.equal((await pool.query('SELECT published_at FROM review_comments WHERE id=$1',[legacyId])).rows[0].published_at,null);
   async function start() {
     server=createApp().listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -78,5 +80,31 @@ try {
     assert.equal((await cli(key)).status,404);
     await pool.query(`UPDATE drafts SET ${column}=NULL WHERE id=$1`,[draft]);
   }
-  console.log('PASS: PostgreSQL legacy-private migration, author/owner/outsider/anonymous matrix, bearer-cookie separation, author-only idempotent publish, visibility-before-pagination, restart persistence and unavailable draft denial');
+  // Verify optional email/domain access control against real PostgreSQL identities.
+  await pool.query(
+    `INSERT INTO identities(id,account_id,provider,subject,email,email_verified)
+     VALUES($1,$2,'shoo','sub-friend','alice@workspace.email',true),
+           ($3,$4,'shoo','sub-other','spoof@workspace.email',false)`,
+    [randomUUID(),friend,randomUUID(),other]
+  );
+  // Non-owner cannot change ACL.
+  assert.equal((await fetch(`${base}/api/drafts/${draft}/access`,{method:'PUT',headers:{authorization:`Bearer ${friendKey}`,'content-type':'application/json'},body:JSON.stringify({allowed:['@workspace.email']})})).status,404);
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/access`,{method:'PUT',headers:{cookie:cookies[friend],origin:base,'content-type':'application/json'},body:JSON.stringify({allowed:['@workspace.email']})})).status,404);
+  // Owner restricts draft to @workspace.email.
+  const restricted=await fetch(`${base}/api/drafts/${draft}/access`,{method:'PUT',headers:{authorization:`Bearer ${key}`,'content-type':'application/json'},body:JSON.stringify({allowed:['@workspace.email']})});
+  assert.equal(restricted.status,200);assert.deepEqual((await restricted.json()).allowed,['@workspace.email']);
+  // Anonymous gets 401; unverified email gets 403; verified domain member and owner get 200.
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/versions`)).status,401);
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/versions`,{headers:{cookie:cookies[other]}})).status,403);
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/versions`,{headers:{cookie:cookies[friend]}})).status,200);
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/versions`,{headers:{cookie:cookies[owner]}})).status,200);
+  assert.equal((await cli(otherKey)).status,403);
+  assert.equal((await cli(friendKey)).status,200);
+  // Missing dashboard form field must not clear restrictions.
+  assert.equal((await fetch(`${base}/dashboard/drafts/${draft}/access`,{method:'POST',headers:{cookie:cookies[owner],origin:base,'content-type':'application/x-www-form-urlencoded'},body:'other=1'})).status,422);
+  assert.deepEqual((await pool.query('SELECT allowed_access FROM drafts WHERE id=$1',[draft])).rows[0].allowed_access,['@workspace.email']);
+  // Explicit clear restores public access.
+  assert.equal((await fetch(`${base}/api/drafts/${draft}/access`,{method:'PUT',headers:{authorization:`Bearer ${key}`,'content-type':'application/json'},body:JSON.stringify({allowed:[]})})).status,200);
+  assert.equal((await fetch(`${base}/review-api/drafts/${draft}/versions`)).status,200);
+  console.log('PASS: PostgreSQL legacy-private migration, author/owner/outsider/anonymous matrix, bearer-cookie separation, author-only idempotent publish, visibility-before-pagination, restart persistence, unavailable draft denial and email/domain ACLs');
 } finally {if(server)await new Promise(r=>server.close(r));await pool.end();}

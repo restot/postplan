@@ -4,6 +4,7 @@ import {pool} from './db.js';
 import {config} from './config.js';
 import {readSession} from './web-auth.js';
 import {createRateLimiter} from './rate-limit.js';
+import {checkDraftAccess,getConfiguredApexOrigin,sqlDraftAccessClause} from './access.js';
 
 export async function initReviewDb() {
   await pool.query(`CREATE TABLE IF NOT EXISTS review_comments (
@@ -28,15 +29,17 @@ function validAnchor(anchor) {
 }
 
 export function registerReviewRoutes(app) {
-  // Draft versions are public. Exclude owner-only metadata from this list.
+  // Draft versions respect per-draft access rules and exclude owner-only metadata.
   app.get('/review-api/drafts/:draftId/versions',async(req,res,next)=>{
     try {
-      const result=await pool.query(`SELECT v.version_number AS version,v.created_at,v.id=d.current_version_id AS current
+      const result=await pool.query(`SELECT v.version_number AS version,v.created_at,v.id=d.current_version_id AS current,d.account_id,d.allowed_access
         FROM draft_versions v JOIN drafts d ON d.id=v.draft_id
         WHERE d.id=$1 AND d.deleted_at IS NULL AND d.disabled_at IS NULL
         ORDER BY v.version_number DESC`,[req.params.draftId]);
       if(!result.rows.length) return res.status(404).json({error:'Draft not found'});
-      res.json(result.rows);
+      const access=await checkDraftAccess(result.rows[0],readSession(req)?.accountId||null);
+      if(!access.ok) return res.status(access.status).json({error:access.error});
+      res.json(result.rows.map(({version,created_at,current})=>({version,created_at,current})));
     } catch(error) { next(error); }
   });
   const signedIn=(req,res,next)=>{
@@ -50,13 +53,17 @@ export function registerReviewRoutes(app) {
       const offset=String(req.query.offset??'0');
       if(!/^\d{1,7}$/.test(offset)) return res.status(422).json({error:'Invalid offset'});
       const viewer=req.auth ? req.auth.account_id : readSession(req)?.accountId||null;
-      const draft=await pool.query('SELECT id,account_id FROM drafts WHERE id=$1 AND deleted_at IS NULL AND disabled_at IS NULL',[req.params.draftId]);
+      const draft=await pool.query('SELECT id,account_id,allowed_access FROM drafts WHERE id=$1 AND deleted_at IS NULL AND disabled_at IS NULL',[req.params.draftId]);
       if(!draft.rows.length) return res.status(404).json({error:'Draft not found'});
-      const owner=viewer!==null && draft.rows[0].account_id===viewer;
+      const access=await checkDraftAccess(draft.rows[0],viewer);
+      if(!access.ok) return res.status(access.status).json({error:access.error});
+      const owner=access.owner;
       const result=await pool.query(`SELECT c.id,c.author_id,c.author_name,c.body,c.anchor,c.created_at,c.published_at,v.version_number AS version,
         COALESCE(c.author_id=$3,false) AND c.published_at IS NULL AS can_publish
-        FROM review_comments c JOIN draft_versions v ON v.id=c.version_id
-        WHERE c.draft_id=$1 AND (c.published_at IS NOT NULL OR c.author_id=$3 OR $4::boolean)
+        FROM review_comments c JOIN draft_versions v ON v.id=c.version_id JOIN drafts d ON d.id=c.draft_id
+        WHERE c.draft_id=$1 AND d.deleted_at IS NULL AND d.disabled_at IS NULL
+        AND ${sqlDraftAccessClause('$3','d')}
+        AND (c.published_at IS NOT NULL OR c.author_id=$3 OR $4::boolean)
         ORDER BY c.created_at,c.id LIMIT 100 OFFSET $2`,[req.params.draftId,Number(offset),viewer,owner]);
       res.json(result.rows);
     } catch(error) { next(error); }
@@ -67,7 +74,8 @@ export function registerReviewRoutes(app) {
   app.use('/review-api',signedIn);
   app.get('/review-api/session',(req,res)=>res.json({name:req.reviewer.accountName||'Reviewer'}));
   const sameOriginJson=(req,res,next)=>{
-    if(!config.publicBaseUrl || req.get('origin')!==new URL(config.publicBaseUrl).origin) return res.status(403).json({error:'Same-origin request required'});
+    const apexOrigin=getConfiguredApexOrigin();
+    if(!apexOrigin || req.get('origin')!==apexOrigin) return res.status(403).json({error:'Same-origin request required'});
     if(!req.is('application/json')) return res.status(415).json({error:'JSON required'});
     next();
   };
@@ -75,10 +83,15 @@ export function registerReviewRoutes(app) {
     try {
       const {body,anchor,version}=req.body||{};
       if(typeof body!=='string' || !body.trim() || body.length>4000 || !Number.isSafeInteger(version) || version<1 || !validAnchor(anchor)) return res.status(422).json({error:'A comment, anchor and positive draft version are required'});
+      const draft=await pool.query('SELECT id,account_id,allowed_access FROM drafts WHERE id=$1 AND deleted_at IS NULL AND disabled_at IS NULL',[req.params.draftId]);
+      if(!draft.rows.length) return res.status(404).json({error:'Draft version not found'});
+      const access=await checkDraftAccess(draft.rows[0],req.reviewer.accountId);
+      if(!access.ok) return res.status(access.status).json({error:access.error});
       const clean={type:anchor.type,quote:anchor.quote,selector:anchor.selector,prefix:anchor.prefix,suffix:anchor.suffix};
       const result=await pool.query(`INSERT INTO review_comments (id,draft_id,version_id,author_id,author_name,body,anchor)
         SELECT $7,d.id,v.id,$3,$4,$5,$6::jsonb FROM drafts d JOIN draft_versions v ON v.draft_id=d.id
         WHERE d.id=$1 AND v.version_number=$2 AND d.deleted_at IS NULL AND d.disabled_at IS NULL
+        AND ${sqlDraftAccessClause('$3','d')}
         RETURNING id,author_id,author_name,body,anchor,created_at,published_at`,
         [req.params.draftId,version,req.reviewer.accountId,req.reviewer.accountName||'Reviewer',body.trim(),JSON.stringify(clean),randomUUID()]);
       if(!result.rows.length) return res.status(404).json({error:'Draft version not found'});
@@ -88,9 +101,14 @@ export function registerReviewRoutes(app) {
   app.post('/review-api/drafts/:draftId/comments/:commentId/publish',sameOriginJson,limit,express.json({limit:'32kb'}),async(req,res,next)=>{
     try {
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.commentId)) return res.status(422).json({error:'Invalid comment ID'});
+      const draft=await pool.query('SELECT id,account_id,allowed_access FROM drafts WHERE id=$1 AND deleted_at IS NULL AND disabled_at IS NULL',[req.params.draftId]);
+      if(!draft.rows.length) return res.status(404).json({error:'Comment not found'});
+      const access=await checkDraftAccess(draft.rows[0],req.reviewer.accountId);
+      if(!access.ok) return res.status(access.status).json({error:access.error});
       const result=await pool.query(`UPDATE review_comments c SET published_at=COALESCE(c.published_at,now())
         FROM drafts d WHERE c.id=$2 AND c.draft_id=$1 AND d.id=c.draft_id
         AND c.author_id=$3 AND d.deleted_at IS NULL AND d.disabled_at IS NULL
+        AND ${sqlDraftAccessClause('$3','d')}
         RETURNING c.id,c.published_at`,[req.params.draftId,req.params.commentId,req.reviewer.accountId]);
       if(!result.rows.length) return res.status(404).json({error:'Comment not found'});
       res.json(result.rows[0]);

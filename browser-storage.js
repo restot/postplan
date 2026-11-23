@@ -26,10 +26,10 @@ export function storageOperation(store, draftId, request) {
   return null;
 }
 
-function hostBridge(draftId, capability, frameUrl, operate, mount, version) {
+function hostBridge(draftId, capability, frameUrl, operate, mount, version, apexReviewUrl) {
   const frame=document.getElementById('postplan-frame');
   let reviewPort;
-  const review=mount(draftId,version,data=>reviewPort?.postMessage(data));
+  const review=mount(draftId,version,data=>reviewPort?.postMessage(data),apexReviewUrl);
   let connected=false;
   window.addEventListener('message',event=>{
     const m=event.data;
@@ -99,7 +99,7 @@ export function withStorageBridge(html,draftId) {
   return serialize(document);
 }
 
-export function renderStorageWrapper(html,draft,path,version=1,previewUrl) {
+export function renderStorageWrapper(html,draft,path,version=1,previewUrl,apexReviewUrl=null) {
   const nonce=randomBytes(24).toString('base64');
   const capability=randomBytes(24).toString('hex');
   const preview=headOf(parse(withPreviewMetadata(html,draft,previewUrl))).childNodes
@@ -109,9 +109,9 @@ export function renderStorageWrapper(html,draft,path,version=1,previewUrl) {
       return /^(og:|twitter:)/.test(name||'') && content!==undefined
         ? `<meta ${name.startsWith('og:')?'property':'name'}="${escape(name)}" content="${escape(content)}">`:'';
     }).join('');
-  const script=`(${hostBridge.toString()})(${literal(draft.id)},${literal(capability)},${literal(path+'?postplan-frame=1')},${storageOperation.toString()},${mountReview.toString()},${literal(version)});`;
+  const script=`(${hostBridge.toString()})(${literal(draft.id)},${literal(capability)},${literal(path+'?postplan-frame=1')},${storageOperation.toString()},${mountReview.toString()},${literal(version)},${literal(apexReviewUrl)});`;
   return {
     csp:`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
-    html:`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(draft.title||'Postplan draft')}</title>${preview}<style nonce="${nonce}">html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}${reviewStyle}</style></head><body><iframe id="postplan-frame" title="${escape(draft.title||'Postplan draft')}" sandbox="allow-scripts allow-popups allow-downloads" referrerpolicy="no-referrer"></iframe>${reviewMarkup}<noscript>JavaScript is needed for comments and saved selections. <a href="${escape(path+'/raw')}">Read the document</a></noscript><script nonce="${nonce}">${script}</script></body></html>`
+    html:`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(draft.title||'Postplan draft')}</title>${preview}<style nonce="${nonce}">html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:flex;flex-direction:row}#postplan-frame{display:block;border:0;flex:1 1 auto;min-width:0;min-height:0;width:auto;height:100%}${reviewStyle}</style></head><body><iframe id="postplan-frame" title="${escape(draft.title||'Postplan draft')}" sandbox="allow-scripts allow-popups allow-downloads" referrerpolicy="no-referrer"></iframe>${reviewMarkup}<noscript>JavaScript is needed for comments and saved selections. <a href="${escape(path+'/raw')}">Read the document</a></noscript><script nonce="${nonce}">${script}</script></body></html>`
   };
 }

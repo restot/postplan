@@ -14,8 +14,17 @@ Read this skill before publishing. Only publish when the user asks to post or sh
   Do not quote private feedback in public output without permission.
   Only the author can publish a comment through the browser's Publish action.
 - `publish_report` takes the complete HTML string, not a path or download URL.
-  Omit `draftId` to create a report. Supply the existing `draftId` to add a new
-  version without changing its public URL. There is no local-path mapping.
+  Omit `draftId` to create a public report. Supply the existing `draftId` to add
+  a new version without changing its URL or existing access restrictions. Never
+  use `publish_report` when the user asks to restrict access.
+- `publish_restricted_report` publishes complete HTML restricted to a required
+  non-empty `allow` list of verified emails and/or `@domains` (e.g.
+  `["@workspace.email", "friend@email.com"]`). If this tool is unavailable, stop
+  and tell the user — never fall back to `publish_report`.
+- `set_report_access` updates optional email or `@domain` access restrictions on
+  an owned report without uploading a new version. Widening access or passing
+  `[]` to make a restricted report public is an outward sharing action — only do
+  so when the user explicitly asks.
 - `unpublish_report` hides an owned report. First show its title and URL and
   obtain explicit user confirmation. Pass that exact title as `confirmTitle`.
   History remains stored. This is not permanent erasure and has no exposed undo.

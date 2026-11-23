@@ -101,6 +101,7 @@ The packaged CLI defaults to `https://postplan.restot.top`. Use `--api-url` when
 | Feature | Behavior |
 | --- | --- |
 | Publish HTML | Upload a local file and get a public link. Repeat the upload to update the same draft. |
+| Restrict access | Optionally limit a report to verified emails (`my-friend@email.com`) or domains (`@workspace.email`) from the sidebar, dashboard, CLI or MCP. |
 | Keep versions | Each update creates a version. Open `/d/<id>/v/<number>` to read an older one. |
 | Switch versions | The Comments menu lists every version with its publication date and a latest-version label. No sign-in required. |
 | Unpublish a draft | `postplan destroy <id> --yes` hides the draft and all its version links. |
@@ -126,6 +127,11 @@ postplan upload ./report.html --description "Review the proposed changes"
 postplan upload ./report.html                 # update the remembered draft
 postplan upload ./report.html --new           # create a separate draft
 postplan upload ./report.html --draft <id>    # update a specific draft
+postplan upload ./report.html --allow @workspace.email --allow my-friend@email.com
+postplan upload ./report.html --public        # remove access restrictions
+postplan access <id>                          # show access rules
+postplan access <id> --allow @workspace.email # restrict an existing draft
+postplan access <id> --public                 # make an existing draft public
 postplan list
 postplan list --json
 postplan comments <id>
@@ -142,7 +148,7 @@ Uploads include the filename and file hash. When available, they also include Gi
 
 ## Review comments
 
-Open **Comments** on a draft. The panel shows **Signed in as [name]** or **Not signed in**. Posting stays disabled while signed out or checking the session. If you sign in in the new tab, return to the draft and press **Refresh**.
+Open **Comments** on a draft. On desktop, the sidebar pushes the report left in a side-by-side layout so you can read and annotate without covering content; on narrow mobile screens it stacks below the report. The panel shows **Signed in as [name]** or **Not signed in**. Posting stays disabled while signed out or checking the session. If you sign in in the new tab, return to the draft and press **Refresh**.
 
 Use the **Version** picker in that menu to open any published version. It shows the viewed version, publication dates and which version is latest. The menu stays open after switching. If you have an unposted comment, switching asks before discarding it. The version list works while signed out and contains no private Git or account metadata.
 
@@ -179,6 +185,17 @@ Comments never rewrite uploaded HTML or local files. The agent reads feedback, e
 POST a JSON object with `body`, a positive integer `version`, and `anchor`. The anchor has `type` set to `text` or `element`, plus `quote`, `selector`, `prefix` and `suffix`. Creation always saves privately; client-supplied publication fields are ignored. `published_at` is null until publication, and `can_publish` is true only for the author of a private comment. Lists apply visibility before pagination and return up to 100 visible comments in creation order. Use `?offset=100` for the next page. The CLI reads all pages. Comment responses are not cacheable.
 
 Comment bodies allow 4,000 characters. Quotes allow 2,000, selectors 1,000, and prefix/suffix context 200 each. Writes are limited to 30 per account per minute.
+
+## Optional access restrictions
+
+Reports are public by default. Report owners can optionally restrict a draft to specific verified email addresses (`my-friend@email.com`) and/or exact email domains (`@workspace.email`):
+
+- **Comments sidebar:** Signed-in report owners see an **Access** box directly in the sidebar.
+- **Dashboard:** Open `/dashboard/drafts/<id>` to view or update rules.
+- **CLI:** Pass `--allow @workspace.email` / `--allow my-friend@email.com` on `postplan upload` or run `postplan access <id> --allow ...` (`--public` clears restrictions). Updating a draft without `--allow` or `--public` preserves its existing restrictions.
+- **MCP:** Use `publish_restricted_report` (with a required non-empty `allow` list; fails closed on older servers) or call `set_report_access`.
+
+Restricted drafts gate the canonical page, embedded frame, `/raw` (which also accepts an authenticated owner or verified-email REST Bearer key), `preview.png`, version list, and comments endpoints. Unauthenticated visitors receive a `401` sign-in prompt (with no draft title, OG preview, or allowlist disclosure), signed-in accounts without a matching verified email receive `403`, and the report owner always retains access. Startup adds `drafts.allowed_access` (`TEXT[]`, default `{}`) only when absent (with a bounded 5-second lock timeout) without modifying existing public reports. Finish rolling out all server replicas before restricting reports (mixed old/new replicas would bypass access checks on old pods), do not roll back to pre-access-control server code while restricted reports exist, and note that restricting a previously public report cannot retract copies or previews already cached externally.
 
 ## Browser storage
 

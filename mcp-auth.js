@@ -175,8 +175,8 @@ export function registerMcpAuth(app, issuer, resource) {
         <h1>Connect Postplan</h1><p>Signed in as ${escape(session.accountName||'Postplan user')}.</p>
         <p><strong>${escape(client.client_name||'Unnamed MCP client')}</strong> requests access to your reports.</p>
         <p>This client name is supplied by its developer, not verified by Postplan.</p>
-        <p>It can publish public reports, read and update your reports, read comments visible to your account, and unpublish reports after confirmation. It cannot run commands or access other services.</p>
-        <p>Reports are public to anyone with the link. Private comments remain private.</p>
+        <p>It can publish public or restricted reports, read and update your reports (including restricted ones you own), change who can view your reports, read comments visible to your account, and unpublish reports after confirmation. It cannot run commands or access other services.</p>
+        <p>Unrestricted reports are public to anyone with the link. Private comments remain private.</p>
         <p>Return to <code>${escape(params.redirectUri)}</code>. Approve only if you started this connection and trust that destination.</p>
         <form method="post" action="/mcp/consent"><input type="hidden" name="request" value="${escape(request)}"><input type="hidden" name="approval" value="${escape(approval)}">
         <button name="decision" value="allow">Allow access</button><button name="decision" value="deny">Cancel</button></form></html>`);

@@ -43,6 +43,7 @@ test('comments reject empty bodies, invalid anchors and versions',async()=>{
 test('author comes from session, comment is bound to an existing public draft version',async()=>{
   let parameters;
   mock.method(pool,'query',async(sql,args)=>{
+    if(sql.startsWith('SELECT id,account_id,allowed_access FROM drafts')) return {rows:[{id:'abcdefghijkl',account_id:'owner',allowed_access:[]}]};
     assert.match(sql,/INSERT INTO review_comments/);parameters=args;
     return {rows:[{id:'1',author_id:'friend',author_name:'Friend',body:args[4],anchor:JSON.parse(args[5]),version:1}]};
   });
@@ -86,6 +87,7 @@ test('browser authors see their private comments without gaining report-owner pr
 });
 test('saving ignores forged publication fields and creates a private comment',async()=>{
   mock.method(pool,'query',async(sql,args)=>{
+    if(sql.startsWith('SELECT id,account_id,allowed_access FROM drafts')) return {rows:[{id:'abcdefghijkl',account_id:'owner',allowed_access:[]}]};
     assert.match(sql,/RETURNING[^]*published_at/);
     assert.doesNotMatch(sql,/INSERT INTO review_comments \([^)]*published_at/);
     return {rows:[{id:'1',author_id:'friend',published_at:null}]};
@@ -105,6 +107,7 @@ test('publishing requires sign-in, same-origin JSON and a valid comment ID',asyn
 });
 test('publish is bound to author, draft and availability, and is idempotent',async()=>{
   mock.method(pool,'query',async(sql,args)=>{
+    if(sql.startsWith('SELECT id,account_id,allowed_access FROM drafts')) return {rows:[{id:'abcdefghijkl',account_id:'owner',allowed_access:[]}]};
     assert.match(sql,/UPDATE review_comments/);assert.match(sql,/c\.author_id=\$3/);
     assert.match(sql,/c\.draft_id=\$1/);assert.match(sql,/c\.id=\$2/);
     assert.match(sql,/deleted_at IS NULL/);assert.match(sql,/disabled_at IS NULL/);
